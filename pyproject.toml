@@ -1,0 +1,109 @@
+# Project-level dev tooling configuration.
+#
+# This file is read by ruff, mypy, and pytest when run locally via
+# `make lint`, `make typecheck`, and `make test`. It is NOT consumed
+# by anything under `scripts/`; the runtime stays stdlib-only.
+#
+# Sandbox note: the deploy target ignores this file entirely.
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Keep output short and stable. Coverage runs through coverage.py driven
+# by tests/coverage_runner.py — no pytest-cov plugin needed.
+addopts = "-ra --strict-markers"
+# Silence pytest's default assertion-rewrite pickle cache warnings in
+# the sandbox, which may mount a read-only FS.
+cache_dir = ".pytest_cache"
+
+# ---------------------------------------------------------------------------
+# ruff (lint + format)
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+# Match the minimum runtime version from requirements.md.
+target-version = "py310"
+line-length = 100
+# Only touch the places we actually maintain.
+src = ["scripts", "tests", "tools"]
+extend-exclude = [
+    ".venv",
+    "build",
+    "db",
+    "docs",
+    "dist",
+    ".pytest_cache",
+    ".trace",
+]
+
+[tool.ruff.lint]
+# Curated rule set. We lean toward "catch real bugs" and away from
+# bikeshedding. The runtime is stdlib-only, so import rules do real work.
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes (unused imports, undefined names, etc.)
+    "W",    # pycodestyle warnings
+    "I",    # isort (import ordering)
+    "B",    # flake8-bugbear (common bug patterns)
+    "UP",   # pyupgrade (py3.10+ idioms)
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff's own checks
+    "PL",   # pylint subset
+]
+ignore = [
+    # Line-too-long: the formatter wraps what it can; the rest is prose in docstrings.
+    "E501",
+    # Magic-value comparisons are fine in tests and small helpers.
+    "PLR2004",
+    # Too-many-* metrics produce noise on scripts that do one real thing.
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915",
+    # Ambiguous-variable-name: we use short names like `n`, `d` in easing math.
+    "E741",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests are allowed to use `assert` freely, skip docstrings, and import locally.
+"tests/**/*.py" = ["B011", "PLR0915"]
+# Package markers are empty on purpose.
+"**/__init__.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+# Treat these as first-party so their imports group together.
+known-first-party = ["scripts", "tests", "tools"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+# Keep docstrings as-is — many of ours contain rendered SQL fragments.
+docstring-code-format = false
+
+# ---------------------------------------------------------------------------
+# mypy (light type checking)
+# ---------------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.10"
+# Only check what we write; skip the whole world.
+files = ["scripts", "tests", "tools"]
+# Warn on things that are almost always bugs, but don't require full
+# annotations everywhere. Tests in particular lean on duck typing.
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+no_implicit_optional = true
+check_untyped_defs = false
+# Tests don't need the full treatment.
+disallow_untyped_defs = false
+# sqlite3.Row and argparse namespaces have permissive types; that's fine.
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+# Tests can be fully untyped without triggering warnings.
+disallow_untyped_defs = false
+check_untyped_defs = false
+warn_return_any = false

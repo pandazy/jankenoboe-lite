@@ -1,0 +1,44 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local dev venv (sandbox doesn't use this)
+.venv/
+venv/
+
+# Coverage / trace output
+.trace/
+htmlcov/
+coverage.xml
+.coverage
+.coverage.*
+.coverage_data/
+.coveragerc
+sitecustomize.py
+
+# Test output
+output/
+.pytest_cache/
+
+# Lint / type-check caches
+.ruff_cache/
+.mypy_cache/
+
+# Packaging artifacts
+dist/
+
+# SQLite journaling side files
+db/datasource.db-journal
+db/datasource.db-wal
+db/datasource.db-shm
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor noise
+*.swp
+*.swo
+.idea/
+.vscode/

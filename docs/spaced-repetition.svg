@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 900 400"
+     role="img"
+     aria-labelledby="title desc">
+  <title id="title">Spaced repetition: wait between reviews grows with level</title>
+  <desc id="desc">A bar chart of the 20-level wait-day path. Bars start flat at 1 day for the first seven levels, then grow along a log scale to 574 days at level 20.</desc>
+
+  <defs>
+    <style>
+      .bar { fill: #6a8caf; stroke: #3b4a5a; stroke-width: 1; }
+      .axis { stroke: #444; stroke-width: 1.5; fill: none; }
+      .title { font-family: sans-serif; font-size: 22px; fill: #1a1a1a; text-anchor: middle; font-weight: 600; }
+      .label { font-family: sans-serif; font-size: 14px; fill: #1a1a1a; text-anchor: middle; }
+      .endpoint { font-family: sans-serif; font-size: 14px; fill: #3b4a5a; }
+      .caption { font-family: sans-serif; font-size: 15px; fill: #333; text-anchor: middle; }
+    </style>
+  </defs>
+
+  <!-- Title -->
+  <text x="450" y="34" class="title">Wait between reviews grows with level</text>
+
+  <!-- Y-axis baseline -->
+  <line class="axis" x1="70" y1="320" x2="860" y2="320"/>
+  <line class="axis" x1="70" y1="60" x2="70" y2="320"/>
+
+  <!-- Bars: 20 rectangles, log(d+1)-scaled heights. Each bar is
+       width 28 with a 10px gap. Baseline at y=320. -->
+  <rect class="bar" x="80"  y="291.6" width="28" height="28.4"/>
+  <rect class="bar" x="118" y="291.6" width="28" height="28.4"/>
+  <rect class="bar" x="156" y="291.6" width="28" height="28.4"/>
+  <rect class="bar" x="194" y="291.6" width="28" height="28.4"/>
+  <rect class="bar" x="232" y="291.6" width="28" height="28.4"/>
+  <rect class="bar" x="270" y="291.6" width="28" height="28.4"/>
+  <rect class="bar" x="308" y="291.6" width="28" height="28.4"/>
+  <rect class="bar" x="346" y="275.0" width="28" height="45.0"/>
+  <rect class="bar" x="384" y="263.3" width="28" height="56.7"/>
+  <rect class="bar" x="422" y="246.7" width="28" height="73.3"/>
+  <rect class="bar" x="460" y="234.9" width="28" height="85.1"/>
+  <rect class="bar" x="498" y="212.0" width="28" height="108.0"/>
+  <rect class="bar" x="536" y="197.4" width="28" height="122.6"/>
+  <rect class="bar" x="574" y="176.9" width="28" height="143.1"/>
+  <rect class="bar" x="612" y="157.5" width="28" height="162.5"/>
+  <rect class="bar" x="650" y="138.2" width="28" height="181.8"/>
+  <rect class="bar" x="688" y="119.0" width="28" height="201.0"/>
+  <rect class="bar" x="726" y="99.1"  width="28" height="220.9"/>
+  <rect class="bar" x="764" y="79.6"  width="28" height="240.4"/>
+  <rect class="bar" x="802" y="60.0"  width="28" height="260.0"/>
+
+  <!-- Endpoint labels on or near the curve -->
+  <text x="120" y="285" class="endpoint">1 day</text>
+  <text x="775" y="54" class="endpoint">574 days</text>
+
+  <!-- Axis tick labels for level 1 and level 20 -->
+  <text x="94" y="340" class="label">lvl 1</text>
+  <text x="816" y="340" class="label">lvl 20</text>
+  <text x="50" y="64" class="label" text-anchor="end">wait</text>
+  <text x="50" y="324" class="label" text-anchor="end">(log)</text>
+
+  <!-- Bottom caption -->
+  <text x="450" y="378" class="caption">review → level up → wait longer next time</text>
+</svg>

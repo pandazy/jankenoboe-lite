@@ -1,0 +1,96 @@
+name: Release
+
+# Triggers:
+#   * Pushing a tag like `v1.2.3` cuts a GitHub Release and uploads the
+#     packaged zip as a release asset.
+#   * `workflow_dispatch` lets you run the build manually from the
+#     Actions tab without tagging — the zip is uploaded as a workflow
+#     artifact so you can download it for smoke-testing.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write  # needed to create the GitHub Release
+
+jobs:
+  release:
+    name: Build and publish release zip
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Matches the deploy sandbox runtime. Also the version the
+          # coverage harness (tests/coverage_runner.py) was built
+          # against — subprocess tracing via sitecustomize works here
+          # but regresses on newer CPython lines where the C tracer
+          # extension drifts ahead of the pinned coverage release.
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dev dependencies
+        # `make setup` creates a .venv, which is unnecessary on a fresh
+        # runner — install straight into the system Python instead.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: |
+          ruff check scripts tests tools
+          ruff format --check scripts tests tools
+
+      - name: Typecheck
+        run: mypy scripts tests tools
+
+      - name: Test with coverage
+        # Calls tests/coverage_runner.py, which enforces the 90% floor.
+        run: ./tests/run.sh
+
+      - name: Build release zip
+        # The `package` target depends on `schema-sync`, so the shipped
+        # scripts/schema.sql stays in lockstep with tests/fixtures/schema.sql.
+        run: make package
+
+      - name: Locate built zip
+        id: zip
+        run: |
+          zip_path=$(ls dist/jankenoboe-lite-*.zip | head -n 1)
+          if [ -z "$zip_path" ]; then
+            echo "no zip produced under dist/" >&2
+            exit 1
+          fi
+          echo "path=$zip_path" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$zip_path")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload zip as workflow artifact
+        # Always upload, so manual dispatch runs produce a downloadable
+        # artifact even when no tag was pushed.
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.zip.outputs.name }}
+          path: ${{ steps.zip.outputs.path }}
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        # Only runs on tag pushes. For workflow_dispatch, the artifact
+        # above is the deliverable.
+        #
+        # Release body: the contents of release.md at the repo root.
+        # `generate_release_notes: true` appends GitHub's auto-generated
+        # changelog (commit/PR list) below the hand-written body.
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.zip.outputs.path }}
+          body_path: release.md
+          generate_release_notes: true
+          fail_on_unmatched_files: true

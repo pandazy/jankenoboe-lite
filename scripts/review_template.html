@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Songs due for review</title>
+  <style>
+    /* Base layout. */
+    body { font-family: system-ui, sans-serif; max-width: 780px;
+           margin: 2em auto; padding: 0 1em; color: #222; }
+    h1 { margin-bottom: 0.2em; }
+    .meta { color: #666; margin-bottom: 1.5em; }
+
+    /* Noscript fallback: shown by default, hidden once the Inline_Script
+       tags <body> as js-active. */
+    .js-required { color: #a00; font-weight: 600; padding: 1em 0; }
+    body.js-active .js-required { display: none; }
+
+    /* Per-item structure (built at runtime by the Inline_Script). */
+    ol { list-style-position: inside; padding: 0; }
+    li[data-level] { padding: 0.8em 0; border-top: 1px solid #eee;
+                     cursor: pointer; }
+    li[data-level]:first-child { border-top: 0; }
+
+    /* Level pill. */
+    .level { display: inline-block; padding: 0.1em 0.6em;
+             background: #0a84ff; color: white; border-radius: 3px;
+             font-size: 0.85em; margin-right: 0.6em; }
+
+    /* Song title + inline name_context. */
+    .song { font-size: 1.15em; font-weight: 600; display: inline-block; }
+    .name-context { color: #888; font-style: italic; margin-left: 0.3em; }
+
+    /* Artist line sits under the title. */
+    .artist { color: #333; margin-top: 0.1em; }
+
+    /* Shows section and per-show sub-blocks. */
+    .shows-section { margin-top: 0.4em; color: #555; font-size: 0.92em; }
+    .show-block { margin: 0.35em 0 0 1.2em; }
+    .show-name { font-weight: 500; color: #222; }
+    .show-meta { color: #777; font-size: 0.9em; }
+
+    /* Per-show link list. */
+    .links { margin: 0.2em 0 0 0; padding-left: 1.4em; font-size: 0.9em; }
+    .links li { list-style-type: disc; }
+    .links a { color: #0a84ff; text-decoration: none; }
+    .links a:hover { text-decoration: underline; }
+
+    /* Copy buttons (R-RH-4). No onclick, no icons from CDN. */
+    .copy-btn { margin-left: 0.4em; font-size: 0.78em;
+                padding: 0 0.45em; cursor: pointer;
+                border: 1px solid #ccc; border-radius: 3px;
+                background: #fafafa; color: #444; }
+    .copy-btn:hover { background: #efefef; }
+    .copy-btn.flash { background: #d5f5d5; border-color: #8fd18f; }
+
+    /* Session "done" highlight (R-RH-5). Cosmetic only. */
+    li[data-level].done { opacity: 0.45; background: #f5f5f5; }
+
+    /* Empty state. */
+    .empty-state { color: #777; font-style: italic;
+                   padding: 2em 0; text-align: center; }
+  </style>
+</head>
+<body>
+  <h1>Songs due for review</h1>
+
+  <!-- Visible only before the Inline_Script adds body.js-active. -->
+  <p class="js-required">
+    This page needs JavaScript to render the due list.
+  </p>
+
+  <!-- The Inline_Script mounts the Rendered_DOM into this element. -->
+  <div id="root"></div>
+
+  <!-- The Due_Data_Payload. scripts/review.py substitutes this marker
+       with the escaped JSON. The marker is unique in the Template_File. -->
+  <script id="due-data" type="application/json"><!-- DUE_DATA_JSON --></script>
+
+  <!-- The Inline_Script. Single element, no src, no type="module". -->
+  <script>
+    (function () {
+      'use strict';
+
+      function mediaUrlBasename(url) {
+        try {
+          var u = new URL(url, 'https://placeholder');
+          var path = u.pathname || '';
+          while (path.length > 0 && path.charAt(path.length - 1) === '/') {
+            path = path.slice(0, -1);
+          }
+          if (path === '') return url;
+          var idx = path.lastIndexOf('/');
+          var last = idx < 0 ? path : path.slice(idx + 1);
+          return last === '' ? url : last;
+        } catch (_e) {
+          return url;
+        }
+      }
+
+      function copyButton(copyTargetId) {
+        var btn = document.createElement('button');
+        btn.setAttribute('type', 'button');
+        btn.setAttribute('data-copy-id', copyTargetId);
+        btn.className = 'copy-btn';
+        btn.textContent = 'copy';
+        return btn;
+      }
+
+      function renderAnchor(url) {
+        var a = document.createElement('a');
+        a.setAttribute('href', url);
+        a.textContent = mediaUrlBasename(url);
+        return a;
+      }
+
+      function renderShowBlock(sh) {
+        var block = document.createElement('div');
+        block.className = 'show-block';
+
+        var name = document.createElement('span');
+        name.className = 'show-name';
+        name.textContent = sh.show_name;
+        block.appendChild(name);
+
+        block.appendChild(copyButton(sh.show_id));
+
+        var extras = [sh.show_name_romaji, sh.show_vintage, sh.show_s_type]
+          .filter(function (x) { return x; });
+        if (extras.length > 0) {
+          var meta = document.createElement('span');
+          meta.className = 'show-meta';
+          meta.textContent = ' — ' + extras.join(', ');
+          block.appendChild(meta);
+        }
+
+        if (sh.media_urls && sh.media_urls.length > 0) {
+          var ul = document.createElement('ul');
+          ul.className = 'links';
+          for (var i = 0; i < sh.media_urls.length; i += 1) {
+            var li = document.createElement('li');
+            li.appendChild(renderAnchor(sh.media_urls[i]));
+            ul.appendChild(li);
+          }
+          block.appendChild(ul);
+        }
+        return block;
+      }
+
+      function renderSong(s) {
+        var li = document.createElement('li');
+        li.setAttribute('data-level', String(s.display_level));
+
+        var pill = document.createElement('span');
+        pill.className = 'level';
+        pill.textContent = 'Level ' + s.display_level;
+        li.appendChild(pill);
+
+        var title = document.createElement('span');
+        title.className = 'song';
+        title.textContent = s.song_name;
+        li.appendChild(title);
+
+        li.appendChild(copyButton(s.song_id));
+
+        if (s.song_name_context) {
+          var ctx = document.createElement('span');
+          ctx.className = 'name-context';
+          ctx.textContent = '(' + s.song_name_context + ')';
+          li.appendChild(ctx);
+        }
+
+        var artist = document.createElement('div');
+        artist.className = 'artist';
+        var aName = document.createElement('span');
+        aName.textContent = s.artist_name;
+        artist.appendChild(aName);
+        artist.appendChild(copyButton(s.artist_id));
+        if (s.artist_name_context) {
+          var ac = document.createElement('span');
+          ac.className = 'name-context';
+          ac.textContent = '(' + s.artist_name_context + ')';
+          artist.appendChild(ac);
+        }
+        li.appendChild(artist);
+
+        if (s.shows && s.shows.length > 0) {
+          var section = document.createElement('div');
+          section.className = 'shows-section';
+          section.textContent = 'Shows:';
+          for (var i = 0; i < s.shows.length; i += 1) {
+            section.appendChild(renderShowBlock(s.shows[i]));
+          }
+          li.appendChild(section);
+        }
+        return li;
+      }
+
+      function renderMeta(data) {
+        var p = document.createElement('p');
+        p.className = 'meta';
+        p.textContent = data.due_count + ' due.';
+        return p;
+      }
+
+      function renderList(songs) {
+        if (!songs || songs.length === 0) {
+          var p = document.createElement('p');
+          p.className = 'empty-state';
+          p.textContent = 'No songs due.';
+          return p;
+        }
+        var ol = document.createElement('ol');
+        for (var i = 0; i < songs.length; i += 1) {
+          ol.appendChild(renderSong(songs[i]));
+        }
+        return ol;
+      }
+
+      function boot() {
+        var node = document.getElementById('due-data');
+        var data = JSON.parse(node.textContent);
+        document.body.classList.add('js-active');
+        var root = document.getElementById('root');
+        root.appendChild(renderMeta(data));
+        root.appendChild(renderList(data.due_songs));
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+      } else {
+        boot();
+      }
+
+      document.addEventListener('click', function (ev) {
+        var btn = ev.target.closest('button[data-copy-id]');
+        if (btn) {
+          var id = btn.getAttribute('data-copy-id');
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(id).catch(function () { /* no-op */ });
+          }
+          btn.classList.add('flash');
+          setTimeout(function () { btn.classList.remove('flash'); }, 600);
+          ev.stopPropagation();
+          return;
+        }
+        if (ev.target.closest('a[href]')) {
+          return;
+        }
+        var li = ev.target.closest('li[data-level]');
+        if (li) {
+          li.classList.toggle('done');
+        }
+      });
+    }());
+  </script>
+</body>
+</html>

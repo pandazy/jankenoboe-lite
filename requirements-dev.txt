@@ -1,0 +1,27 @@
+# Local development dependencies.
+#
+# These are NOT used at runtime and are NOT part of the deliverable. Nothing
+# under `scripts/` may import from this list. Runtime is the Python 3.10+
+# standard library alone — full stop. That rule keeps the deployable zip
+# tiny and lets the app drop onto any restricted Python environment.
+#
+# On the dev side, however, pick whatever's convenient — this list is free
+# to grow as new tools help productivity. The deploy sandbox does NOT get
+# a test install of this file, so it carries zero runtime risk.
+#
+# Install into a local venv:
+#     python3 -m venv .venv && source .venv/bin/activate
+#     pip install -r requirements-dev.txt
+
+# Test runner.
+pytest==9.0.3
+
+# Coverage measurement with HTML + term-missing output. Simpler than the
+# stdlib `trace` runner and handles pytest's settrace cleanup cleanly.
+coverage==7.6.10
+
+# Linter + formatter in one tool. Fast, no compile step.
+ruff==0.14.4
+
+# Type checker. Light-touch — we annotate where it helps clarity.
+mypy==1.19.0

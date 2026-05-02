@@ -1,0 +1,552 @@
+"""Integration tests for ``scripts/import_plan.py``.
+
+Covers R12.1-R12.9. ``import_plan.py`` is read-only; the tests also
+check that the DB file is byte-identical before and after every run.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import urllib.parse
+from typing import Any
+
+
+def _db_hash(app_root) -> str:
+    h = hashlib.sha256()
+    h.update((app_root / "db" / "datasource.db").read_bytes())
+    return h.hexdigest()
+
+
+def _run_plan(
+    pinned_call,
+    cwd,
+    now,
+    input_path,
+    output_path: str | None = None,
+    positional: bool = False,
+) -> tuple[int, Any, Any]:
+    args: list[str] = []
+    if positional:
+        args.append(str(input_path))
+    else:
+        args += ["--input", str(input_path)]
+    if output_path is not None:
+        args += ["--output", str(output_path)]
+    rc, out, err = pinned_call("import_plan.py", *args, cwd=cwd, now=now)
+    out_parsed: Any = None
+    err_parsed: Any = None
+    if out.strip():
+        try:
+            out_parsed = json.loads(out)
+        except json.JSONDecodeError:
+            out_parsed = None
+    if err.strip():
+        try:
+            err_parsed = json.loads(err)
+        except json.JSONDecodeError:
+            err_parsed = None
+    return rc, out_parsed, err_parsed
+
+
+def _write_amq(app_root, entries: list[dict]) -> str:
+    p = app_root / "amq.json"
+    p.write_text(json.dumps(entries), encoding="utf-8")
+    return str(p)
+
+
+# ---------------------------------------------------------------------------
+# R12.4 — exact-match resolved
+# ---------------------------------------------------------------------------
+
+
+def test_resolved_exact_match_with_existing_show(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+    insert_artist,
+    insert_song,
+    insert_show,
+) -> None:
+    artist_id = insert_artist(tmp_app_root, name="Artist A")
+    song_id = insert_song(tmp_app_root, name="Song A", artist_id=artist_id)
+    show_id = insert_show(tmp_app_root, name="Show A", vintage="Fall 2024")
+
+    entries = [
+        {
+            "artist_name": "Artist A",
+            "song_name": "Song A",
+            "show_name": "Show A",
+            "vintage": "Fall 2024",
+            "media_url": "http://x/a",
+        }
+    ]
+    amq = _write_amq(tmp_app_root, entries)
+
+    before = _db_hash(tmp_app_root)
+    rc, out, err = _run_plan(pinned_call, tmp_app_root, pinned_now, amq)
+    assert rc == 0, err
+    assert _db_hash(tmp_app_root) == before
+
+    assert len(out["resolved"]) == 1
+    assert len(out["auto_completable"]) == 0
+    assert len(out["ambiguous"]) == 0
+    item = out["resolved"][0]
+    assert item["song_id"] == song_id
+    assert item["show_id"] == show_id
+    assert item["media_url"] == "http://x/a"
+
+
+# ---------------------------------------------------------------------------
+# R12.4 — auto_completable when artist exists but song is missing
+# ---------------------------------------------------------------------------
+
+
+def test_auto_completable_artist_exists_song_missing(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+    insert_artist,
+    insert_show,
+) -> None:
+    artist_id = insert_artist(tmp_app_root, name="Artist B")
+    insert_show(tmp_app_root, name="Show B", vintage="")
+
+    entries = [
+        {
+            "artist_name": "Artist B",
+            "song_name": "Fresh Song",
+            "show_name": "Show B",
+            "vintage": "",
+            "media_url": "",
+        }
+    ]
+    amq = _write_amq(tmp_app_root, entries)
+
+    rc, out, err = _run_plan(pinned_call, tmp_app_root, pinned_now, amq)
+    assert rc == 0, err
+    assert len(out["auto_completable"]) == 1
+    item = out["auto_completable"][0]
+    assert item["artist_id"] == artist_id
+    assert "artist_to_create" not in item
+    assert item["song_name"] == "Fresh Song"
+    assert "show_id" in item
+
+
+# ---------------------------------------------------------------------------
+# R12.4 — auto_completable when the artist is also missing
+# ---------------------------------------------------------------------------
+
+
+def test_auto_completable_artist_missing_gets_artist_to_create(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+) -> None:
+    entries = [
+        {
+            "artist_name": "Never Heard Of",
+            "song_name": "Never Heard Song",
+            "show_name": "Never Heard Show",
+            "vintage": "Summer 2099",
+            "media_url": "http://x/new",
+        }
+    ]
+    amq = _write_amq(tmp_app_root, entries)
+
+    rc, out, err = _run_plan(pinned_call, tmp_app_root, pinned_now, amq)
+    assert rc == 0, err
+    assert len(out["auto_completable"]) == 1
+    item = out["auto_completable"][0]
+    assert item["artist_to_create"] == {"name": "Never Heard Of"}
+    assert item["song_name"] == "Never Heard Song"
+    assert item["show_to_create"]["name"] == "Never Heard Show"
+    assert item["show_to_create"]["vintage"] == "Summer 2099"
+    assert item["show_to_create"]["s_type"] is None
+    assert item["show_to_create"]["name_romaji"] is None
+
+
+# ---------------------------------------------------------------------------
+# R12.4 — ambiguous when two live artists share the name
+# ---------------------------------------------------------------------------
+
+
+def test_ambiguous_when_two_artists_share_name(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+    insert_artist,
+    insert_show,
+) -> None:
+    a1 = insert_artist(tmp_app_root, name="Twin", name_context="solo")
+    a2 = insert_artist(tmp_app_root, name="Twin", name_context="band")
+    insert_show(tmp_app_root, name="Show", vintage="")
+
+    entries = [
+        {
+            "artist_name": "Twin",
+            "song_name": "Ambiguous Song",
+            "show_name": "Show",
+            "vintage": "",
+            "media_url": "",
+        }
+    ]
+    amq = _write_amq(tmp_app_root, entries)
+
+    rc, out, err = _run_plan(pinned_call, tmp_app_root, pinned_now, amq)
+    assert rc == 0, err
+    assert len(out["ambiguous"]) == 1
+    item = out["ambiguous"][0]
+    assert item["artist_name"] == "Twin"
+    assert item["song_name"] == "Ambiguous Song"
+    assert item["show_name"] == "Show"
+    # Both candidates present regardless of order.
+    cand_ids = sorted(c["id"] for c in item["candidates"])
+    assert cand_ids == sorted([a1, a2])
+
+
+# ---------------------------------------------------------------------------
+# R12.4 — SONG_INVARIANT_VIOLATION when one artist owns two same-name songs
+# ---------------------------------------------------------------------------
+
+
+def test_song_invariant_violation_aborts(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+    insert_artist,
+    insert_song,
+) -> None:
+    artist_id = insert_artist(tmp_app_root, name="Artist")
+    s1 = insert_song(tmp_app_root, name="Dup Song", artist_id=artist_id)
+    s2 = insert_song(tmp_app_root, name="Dup Song", artist_id=artist_id)
+
+    entries = [
+        {
+            "artist_name": "Artist",
+            "song_name": "Dup Song",
+            "show_name": "",
+            "vintage": "",
+            "media_url": "",
+        }
+    ]
+    amq = _write_amq(tmp_app_root, entries)
+
+    rc, _out, err = _run_plan(pinned_call, tmp_app_root, pinned_now, amq)
+    assert rc == 1
+    assert err["error"]["code"] == "SONG_INVARIANT_VIOLATION"
+    details = err["error"]["details"]
+    assert details["artist_id"] == artist_id
+    assert details["song_name"] == "Dup Song"
+    assert sorted(details["song_ids"]) == sorted([s1, s2])
+
+
+# ---------------------------------------------------------------------------
+# R12.5 — missing show alone stays in the entry's bucket; does not cause ambiguous
+# ---------------------------------------------------------------------------
+
+
+def test_missing_show_does_not_make_ambiguous(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+    insert_artist,
+    insert_song,
+) -> None:
+    artist_id = insert_artist(tmp_app_root, name="Artist X")
+    insert_song(tmp_app_root, name="Song X", artist_id=artist_id)
+
+    entries = [
+        {
+            "artist_name": "Artist X",
+            "song_name": "Song X",
+            "show_name": "No Such Show",
+            "vintage": "Fall 9999",
+            "media_url": "",
+        }
+    ]
+    amq = _write_amq(tmp_app_root, entries)
+
+    rc, out, err = _run_plan(pinned_call, tmp_app_root, pinned_now, amq)
+    assert rc == 0, err
+    assert len(out["resolved"]) == 1
+    item = out["resolved"][0]
+    assert "show_id" not in item
+    assert item["show_to_create"]["name"] == "No Such Show"
+    assert item["show_to_create"]["vintage"] == "Fall 9999"
+
+
+# ---------------------------------------------------------------------------
+# R12.3 — URL-decoded fields
+# ---------------------------------------------------------------------------
+
+
+def test_url_decoded_fields_are_matched_after_decoding(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+    insert_artist,
+    insert_song,
+    insert_show,
+) -> None:
+    # Artist name contains an ASCII char that gets percent-encoded.
+    artist_id = insert_artist(tmp_app_root, name="A & B")
+    insert_song(tmp_app_root, name="Song & Friends", artist_id=artist_id)
+    insert_show(tmp_app_root, name="Show %s", vintage="")
+
+    entries = [
+        {
+            "artist_name": urllib.parse.quote("A & B"),
+            "song_name": urllib.parse.quote("Song & Friends"),
+            "show_name": urllib.parse.quote("Show %s"),
+            "vintage": "",
+            "media_url": urllib.parse.quote("http://x/y?z=1&w=2"),
+        }
+    ]
+    amq = _write_amq(tmp_app_root, entries)
+
+    rc, out, err = _run_plan(pinned_call, tmp_app_root, pinned_now, amq)
+    assert rc == 0, err
+    assert len(out["resolved"]) == 1
+    item = out["resolved"][0]
+    assert item["media_url"] == "http://x/y?z=1&w=2"
+
+
+# ---------------------------------------------------------------------------
+# R12.9 — --output writes file + prints summary
+# ---------------------------------------------------------------------------
+
+
+def test_output_writes_plan_file_and_prints_summary(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+    insert_artist,
+) -> None:
+    insert_artist(tmp_app_root, name="Named")
+    entries = [
+        {
+            "artist_name": "Named",
+            "song_name": "Some Song",
+            "show_name": "Some Show",
+            "vintage": "",
+            "media_url": "",
+        },
+        {
+            "artist_name": "Brand New",
+            "song_name": "Brand Song",
+            "show_name": "Brand Show",
+            "vintage": "",
+            "media_url": "",
+        },
+    ]
+    amq = _write_amq(tmp_app_root, entries)
+    out_path = tmp_app_root / "output" / "plan.json"
+
+    rc, summary, err = _run_plan(
+        pinned_call,
+        tmp_app_root,
+        pinned_now,
+        amq,
+        output_path=str(out_path),
+    )
+    assert rc == 0, err
+    # Summary, not full plan.
+    assert set(summary.keys()) == {
+        "resolved_count",
+        "auto_completable_count",
+        "ambiguous_count",
+        "path",
+    }
+    assert summary["resolved_count"] == 0
+    assert summary["auto_completable_count"] == 2
+    assert summary["ambiguous_count"] == 0
+    # Path is absolute.
+    assert summary["path"].endswith("plan.json")
+
+    # The file exists, is valid JSON, and matches the summary counts.
+    assert out_path.exists()
+    plan = json.loads(out_path.read_text())
+    assert len(plan["resolved"]) == 0
+    assert len(plan["auto_completable"]) == 2
+    assert len(plan["ambiguous"]) == 0
+
+
+def test_positional_input_path_is_accepted(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+) -> None:
+    entries: list[dict] = []
+    amq = _write_amq(tmp_app_root, entries)
+
+    rc, out, err = _run_plan(
+        pinned_call,
+        tmp_app_root,
+        pinned_now,
+        amq,
+        positional=True,
+    )
+    assert rc == 0, err
+    assert out == {"resolved": [], "auto_completable": [], "ambiguous": []}
+
+
+# ---------------------------------------------------------------------------
+# R12.7 — DB is byte-identical before and after (read-only)
+# ---------------------------------------------------------------------------
+
+
+def test_plan_does_not_modify_db(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+    insert_artist,
+    insert_song,
+    insert_show,
+) -> None:
+    artist_id = insert_artist(tmp_app_root, name="Stable")
+    insert_song(tmp_app_root, name="Stable Song", artist_id=artist_id)
+    insert_show(tmp_app_root, name="Stable Show", vintage="")
+
+    entries = [
+        {
+            "artist_name": "Stable",
+            "song_name": "Stable Song",
+            "show_name": "Stable Show",
+            "vintage": "",
+            "media_url": "",
+        },
+        {
+            "artist_name": "Unknown",
+            "song_name": "Unknown Song",
+            "show_name": "Unknown Show",
+            "vintage": "Spring 1999",
+            "media_url": "",
+        },
+    ]
+    amq = _write_amq(tmp_app_root, entries)
+
+    before = _db_hash(tmp_app_root)
+    rc, _out, err = _run_plan(pinned_call, tmp_app_root, pinned_now, amq)
+    assert rc == 0, err
+    assert _db_hash(tmp_app_root) == before
+
+
+# ---------------------------------------------------------------------------
+# R12 — mixed buckets in a single run
+# ---------------------------------------------------------------------------
+
+
+def test_mixed_buckets_sum_equals_entry_count(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+    insert_artist,
+    insert_song,
+    insert_show,
+) -> None:
+    existing_artist = insert_artist(tmp_app_root, name="Existing")
+    insert_song(tmp_app_root, name="Existing Song", artist_id=existing_artist)
+    insert_artist(tmp_app_root, name="Twin", name_context="a")
+    insert_artist(tmp_app_root, name="Twin", name_context="b")
+    insert_show(tmp_app_root, name="Show", vintage="")
+
+    entries = [
+        # resolved
+        {
+            "artist_name": "Existing",
+            "song_name": "Existing Song",
+            "show_name": "Show",
+            "vintage": "",
+            "media_url": "",
+        },
+        # auto_completable (artist exists, song doesn't)
+        {
+            "artist_name": "Existing",
+            "song_name": "New Song",
+            "show_name": "Show",
+            "vintage": "",
+            "media_url": "",
+        },
+        # auto_completable (artist missing)
+        {
+            "artist_name": "Brand New",
+            "song_name": "Whatever",
+            "show_name": "Show",
+            "vintage": "",
+            "media_url": "",
+        },
+        # ambiguous
+        {
+            "artist_name": "Twin",
+            "song_name": "Conflict",
+            "show_name": "Show",
+            "vintage": "",
+            "media_url": "",
+        },
+    ]
+    amq = _write_amq(tmp_app_root, entries)
+
+    rc, out, err = _run_plan(pinned_call, tmp_app_root, pinned_now, amq)
+    assert rc == 0, err
+    total = len(out["resolved"]) + len(out["auto_completable"]) + len(out["ambiguous"])
+    assert total == len(entries)
+    assert len(out["resolved"]) == 1
+    assert len(out["auto_completable"]) == 2
+    assert len(out["ambiguous"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Error paths
+# ---------------------------------------------------------------------------
+
+
+def test_no_args_prints_help_exits_zero(
+    tmp_app_root,
+    call_script,
+) -> None:
+    """R2.4: scripts called with no arguments print usage and exit 0."""
+    rc, out, _err = call_script("import_plan.py", cwd=tmp_app_root)
+    assert rc == 0
+    assert "import_plan.py" in out or "--input" in out
+
+
+def test_missing_file_emits_invalid_input(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+) -> None:
+    rc, _out, err = _run_plan(
+        pinned_call,
+        tmp_app_root,
+        pinned_now,
+        tmp_app_root / "no-such-file.json",
+    )
+    assert rc == 1
+    assert err["error"]["code"] == "INVALID_INPUT"
+
+
+def test_non_json_input_emits_invalid_input(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+) -> None:
+    bad = tmp_app_root / "bad.json"
+    bad.write_text("not json at all", encoding="utf-8")
+
+    rc, _out, err = _run_plan(pinned_call, tmp_app_root, pinned_now, str(bad))
+    assert rc == 1
+    assert err["error"]["code"] == "INVALID_INPUT"
+
+
+def test_non_array_top_level_emits_invalid_input(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+) -> None:
+    bad = tmp_app_root / "bad.json"
+    bad.write_text(json.dumps({"not": "an array"}), encoding="utf-8")
+
+    rc, _out, err = _run_plan(pinned_call, tmp_app_root, pinned_now, str(bad))
+    assert rc == 1
+    assert err["error"]["code"] == "INVALID_INPUT"
