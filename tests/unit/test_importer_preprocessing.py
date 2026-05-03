@@ -75,18 +75,45 @@ def test_discriminate_none_raises():
 
 
 # ---------------------------------------------------------------------------
+# _get_nested
+# ---------------------------------------------------------------------------
+
+
+def test_get_nested_empty_path_returns_input_unchanged():
+    obj = {"a": {"b": "leaf"}}
+    assert m._get_nested(obj, ()) is obj
+
+
+def test_get_nested_length_one_path_returns_leaf():
+    assert m._get_nested({"a": "leaf"}, ("a",)) == "leaf"
+
+
+def test_get_nested_length_three_path_through_nested_dicts_returns_leaf():
+    assert m._get_nested({"a": {"b": {"c": "leaf"}}}, ("a", "b", "c")) == "leaf"
+
+
+def test_get_nested_missing_container_mid_walk_returns_none():
+    assert m._get_nested({"a": {}}, ("a", "b", "c")) is None
+
+
+def test_get_nested_non_dict_container_mid_walk_returns_none():
+    assert m._get_nested({"a": "scalar"}, ("a", "b")) is None
+
+
+# ---------------------------------------------------------------------------
 # _amq_entry_to_flat
 # ---------------------------------------------------------------------------
 
 
 def test_amq_entry_to_flat_all_amq_keys_present():
     entry = {
-        "songArtist": "Lia",
-        "songName": "Megumeru",
-        "animeEnglishName": "Clannad",
-        "animeRomajiName": "Kuranado",
-        "vintage": "Fall 2007",
-        "audio": "https://example.com/megumeru.mp3",
+        "songInfo": {
+            "artist": "Lia",
+            "songName": "Megumeru",
+            "animeNames": {"english": "Clannad", "romaji": "Kuranado"},
+            "vintage": "Fall 2007",
+        },
+        "videoUrl": "https://example.com/megumeru.mp3",
     }
     got = m._amq_entry_to_flat(entry, 0)
     assert got == {
@@ -118,12 +145,13 @@ def test_amq_entry_to_flat_all_flat_alias_keys_present():
 
 def test_amq_entry_to_flat_english_name_beats_romaji_when_both_present():
     entry = {
-        "songArtist": "Lia",
-        "songName": "Megumeru",
-        "animeEnglishName": "Clannad",
-        "animeRomajiName": "Kuranado",
-        "vintage": "Fall 2007",
-        "audio": "https://example.com/megumeru.mp3",
+        "songInfo": {
+            "artist": "Lia",
+            "songName": "Megumeru",
+            "animeNames": {"english": "Clannad", "romaji": "Kuranado"},
+            "vintage": "Fall 2007",
+        },
+        "videoUrl": "https://example.com/megumeru.mp3",
     }
     got = m._amq_entry_to_flat(entry, 0)
     assert got["show_name"] == "Clannad"
@@ -131,11 +159,13 @@ def test_amq_entry_to_flat_english_name_beats_romaji_when_both_present():
 
 def test_amq_entry_to_flat_romaji_used_when_english_absent():
     entry = {
-        "songArtist": "Lia",
-        "songName": "Megumeru",
-        "animeRomajiName": "Kuranado",
-        "vintage": "Fall 2007",
-        "audio": "https://example.com/megumeru.mp3",
+        "songInfo": {
+            "artist": "Lia",
+            "songName": "Megumeru",
+            "animeNames": {"romaji": "Kuranado"},
+            "vintage": "Fall 2007",
+        },
+        "videoUrl": "https://example.com/megumeru.mp3",
     }
     got = m._amq_entry_to_flat(entry, 0)
     assert got["show_name"] == "Kuranado"
@@ -143,10 +173,12 @@ def test_amq_entry_to_flat_romaji_used_when_english_absent():
 
 def test_amq_entry_to_flat_missing_media_url_defaults_to_empty():
     entry = {
-        "songArtist": "Lia",
-        "songName": "Megumeru",
-        "animeEnglishName": "Clannad",
-        "vintage": "Fall 2007",
+        "songInfo": {
+            "artist": "Lia",
+            "songName": "Megumeru",
+            "animeNames": {"english": "Clannad"},
+            "vintage": "Fall 2007",
+        },
     }
     got = m._amq_entry_to_flat(entry, 0)
     assert got["media_url"] == ""
@@ -154,10 +186,13 @@ def test_amq_entry_to_flat_missing_media_url_defaults_to_empty():
 
 def test_amq_entry_to_flat_empty_string_media_candidates_default_to_empty():
     entry = {
-        "songArtist": "Lia",
-        "songName": "Megumeru",
-        "animeEnglishName": "Clannad",
-        "vintage": "Fall 2007",
+        "songInfo": {
+            "artist": "Lia",
+            "songName": "Megumeru",
+            "animeNames": {"english": "Clannad"},
+            "vintage": "Fall 2007",
+        },
+        "videoUrl": "",
         "audio": "",
         "media_url": "",
         "MP3": "",
@@ -169,10 +204,12 @@ def test_amq_entry_to_flat_empty_string_media_candidates_default_to_empty():
 
 def test_amq_entry_to_flat_missing_artist_raises_invalid_input():
     entry = {
-        "songName": "Megumeru",
-        "animeEnglishName": "Clannad",
-        "vintage": "Fall 2007",
-        "audio": "https://example.com/megumeru.mp3",
+        "songInfo": {
+            "songName": "Megumeru",
+            "animeNames": {"english": "Clannad"},
+            "vintage": "Fall 2007",
+        },
+        "videoUrl": "https://example.com/megumeru.mp3",
     }
     with pytest.raises(_common.KnownError) as exc:
         m._amq_entry_to_flat(entry, 7)
@@ -186,10 +223,13 @@ def test_amq_entry_to_flat_empty_string_artist_counts_as_missing():
     # Empty strings for required fields are treated as missing — no
     # second candidate exists here, so this must raise.
     entry = {
-        "songArtist": "",
-        "songName": "Megumeru",
-        "animeEnglishName": "Clannad",
-        "vintage": "Fall 2007",
+        "songInfo": {
+            "artist": "",
+            "songName": "Megumeru",
+            "animeNames": {"english": "Clannad"},
+            "vintage": "Fall 2007",
+        },
+        "videoUrl": "https://example.com/megumeru.mp3",
     }
     with pytest.raises(_common.KnownError) as exc:
         m._amq_entry_to_flat(entry, 2)
@@ -200,9 +240,11 @@ def test_amq_entry_to_flat_empty_string_artist_counts_as_missing():
 
 def test_amq_entry_to_flat_missing_song_name_raises():
     entry = {
-        "songArtist": "Lia",
-        "animeEnglishName": "Clannad",
-        "vintage": "Fall 2007",
+        "songInfo": {
+            "artist": "Lia",
+            "animeNames": {"english": "Clannad"},
+            "vintage": "Fall 2007",
+        },
     }
     with pytest.raises(_common.KnownError) as exc:
         m._amq_entry_to_flat(entry, 1)
@@ -213,9 +255,11 @@ def test_amq_entry_to_flat_missing_song_name_raises():
 
 def test_amq_entry_to_flat_missing_show_name_raises():
     entry = {
-        "songArtist": "Lia",
-        "songName": "Megumeru",
-        "vintage": "Fall 2007",
+        "songInfo": {
+            "artist": "Lia",
+            "songName": "Megumeru",
+            "vintage": "Fall 2007",
+        },
     }
     with pytest.raises(_common.KnownError) as exc:
         m._amq_entry_to_flat(entry, 4)
@@ -226,9 +270,11 @@ def test_amq_entry_to_flat_missing_show_name_raises():
 
 def test_amq_entry_to_flat_missing_vintage_raises():
     entry = {
-        "songArtist": "Lia",
-        "songName": "Megumeru",
-        "animeEnglishName": "Clannad",
+        "songInfo": {
+            "artist": "Lia",
+            "songName": "Megumeru",
+            "animeNames": {"english": "Clannad"},
+        },
     }
     with pytest.raises(_common.KnownError) as exc:
         m._amq_entry_to_flat(entry, 0)
@@ -238,17 +284,23 @@ def test_amq_entry_to_flat_missing_vintage_raises():
 
 def test_amq_entry_to_flat_drops_extra_amq_native_fields():
     entry = {
-        "songArtist": "Lia",
-        "songName": "Megumeru",
-        "animeEnglishName": "Clannad",
-        "vintage": "Fall 2007",
-        "audio": "https://example.com/megumeru.mp3",
-        # Extra AMQ-native noise that must be silently dropped.
-        "type": 1,
-        "fromList": 0,
-        "startSample": 42,
-        "videoLength": 180,
-        "urlMap": {"catbox": {"0": "https://files.catbox.moe/x.webm"}},
+        "songInfo": {
+            "artist": "Lia",
+            "songName": "Megumeru",
+            "animeNames": {"english": "Clannad"},
+            "vintage": "Fall 2007",
+            # Extra nested game-state noise on songInfo itself.
+            "composerInfo": {"id": 1, "names": []},
+            "arrangerInfo": {"id": 2, "names": []},
+            "annId": 12345,
+        },
+        "videoUrl": "https://example.com/megumeru.mp3",
+        # Extra AMQ-native noise at the top level that must be silently dropped.
+        "type": 2,
+        "songNumber": 1,
+        "correctGuess": True,
+        "videoLength": 194.416,
+        "startPoint": 40,
     }
     got = m._amq_entry_to_flat(entry, 0)
     assert set(got.keys()) == {
@@ -262,11 +314,13 @@ def test_amq_entry_to_flat_drops_extra_amq_native_fields():
 
 def test_amq_entry_to_flat_key_order_is_stable():
     entry = {
-        "songArtist": "Lia",
-        "songName": "Megumeru",
-        "animeEnglishName": "Clannad",
-        "vintage": "Fall 2007",
-        "audio": "https://example.com/megumeru.mp3",
+        "songInfo": {
+            "artist": "Lia",
+            "songName": "Megumeru",
+            "animeNames": {"english": "Clannad"},
+            "vintage": "Fall 2007",
+        },
+        "videoUrl": "https://example.com/megumeru.mp3",
     }
     got = m._amq_entry_to_flat(entry, 0)
     assert list(got.keys()) == [
@@ -287,28 +341,35 @@ def test_flatten_amq_three_song_happy_path():
     payload = {
         "songs": [
             {
-                "songArtist": "Lia",
-                "songName": "Megumeru",
-                "animeEnglishName": "Clannad",
-                "vintage": "Fall 2007",
-                "audio": "https://example.com/megumeru.mp3",
+                "songInfo": {
+                    "artist": "Lia",
+                    "songName": "Megumeru",
+                    "animeNames": {"english": "Clannad"},
+                    "vintage": "Fall 2007",
+                },
+                "videoUrl": "https://example.com/megumeru.mp3",
             },
             {
-                "songArtist": "Yui",
-                "songName": "Again",
-                "animeEnglishName": "Fullmetal Alchemist: Brotherhood",
-                "vintage": "Spring 2009",
-                "audio": "https://example.com/again.mp3",
+                "songInfo": {
+                    "artist": "Yui",
+                    "songName": "Again",
+                    "animeNames": {"english": "Fullmetal Alchemist: Brotherhood"},
+                    "vintage": "Spring 2009",
+                },
+                "videoUrl": "https://example.com/again.mp3",
             },
             {
-                "songArtist": "FLOW",
-                "songName": "GO!!!",
-                "animeEnglishName": "Naruto",
-                "vintage": "Fall 2002",
-                "audio": "https://example.com/go.mp3",
+                "songInfo": {
+                    "artist": "FLOW",
+                    "songName": "GO!!!",
+                    "animeNames": {"english": "Naruto"},
+                    "vintage": "Fall 2002",
+                },
+                "videoUrl": "https://example.com/go.mp3",
             },
         ],
         # Extra top-level siblings that must be ignored.
+        "roomName": "Solo",
         "quizSettings": {"songCount": 40},
         "exportTimestamp": 1700000000,
     }
@@ -342,19 +403,23 @@ def test_flatten_amq_non_dict_entry_raises_with_index():
     payload = {
         "songs": [
             {
-                "songArtist": "Lia",
-                "songName": "Megumeru",
-                "animeEnglishName": "Clannad",
-                "vintage": "Fall 2007",
-                "audio": "https://example.com/megumeru.mp3",
+                "songInfo": {
+                    "artist": "Lia",
+                    "songName": "Megumeru",
+                    "animeNames": {"english": "Clannad"},
+                    "vintage": "Fall 2007",
+                },
+                "videoUrl": "https://example.com/megumeru.mp3",
             },
             "not a dict",
             {
-                "songArtist": "FLOW",
-                "songName": "GO!!!",
-                "animeEnglishName": "Naruto",
-                "vintage": "Fall 2002",
-                "audio": "https://example.com/go.mp3",
+                "songInfo": {
+                    "artist": "FLOW",
+                    "songName": "GO!!!",
+                    "animeNames": {"english": "Naruto"},
+                    "vintage": "Fall 2002",
+                },
+                "videoUrl": "https://example.com/go.mp3",
             },
         ],
     }
@@ -372,13 +437,17 @@ def test_flatten_amq_ignores_top_level_siblings():
     payload = {
         "songs": [
             {
-                "songArtist": "Lia",
-                "songName": "Megumeru",
-                "animeEnglishName": "Clannad",
-                "vintage": "Fall 2007",
-                "audio": "https://example.com/megumeru.mp3",
+                "songInfo": {
+                    "artist": "Lia",
+                    "songName": "Megumeru",
+                    "animeNames": {"english": "Clannad"},
+                    "vintage": "Fall 2007",
+                },
+                "videoUrl": "https://example.com/megumeru.mp3",
             },
         ],
+        "roomName": "Solo",
+        "startTime": 1700000000,
         "quizSettings": {"songCount": 1, "guessTime": 20},
         "exportTimestamp": 1700000000,
         "gameMode": "Standard",

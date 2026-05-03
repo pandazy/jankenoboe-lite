@@ -86,27 +86,34 @@ Object keyed by the stringified index of an ambiguous entry.
 
 ## Raw AMQ input mapping
 
-`--input-jsonpath` and `--input-jsonstr` also accept the raw AMQ export shape: a JSON object with a top-level `songs` array. Top-level siblings of `songs` (game metadata, quiz settings, export timestamps) are silently dropped.
+`--input-jsonpath` and `--input-jsonstr` also accept the raw AMQ export shape: a JSON object with a top-level `songs` array. Each song object nests its data under a `songInfo` sub-object (with show names one level deeper under `songInfo.animeNames`), and exposes the media URL as the top-level `videoUrl` on the song. Top-level siblings of `songs` (game metadata, quiz settings, export timestamps) are silently dropped.
 
 ```json
 {
   "songs": [
-    {"songArtist": "...", "songName": "...",
-     "animeEnglishName": "...", "animeRomajiName": "...",
-     "vintage": "Spring 2024", "audio": "https://..."}
+    {
+      "songInfo": {
+        "artist": "...",
+        "songName": "...",
+        "animeNames": {"english": "...", "romaji": "..."},
+        "vintage": "Spring 2024"
+      },
+      "videoUrl": "https://..."
+    }
   ],
-  "quizSettings": {}
+  "roomName": "Solo",
+  "startTime": "..."
 }
 ```
 
-Each AMQ song object is translated to the flat five-field shape via this mapping. For each flat key the candidate raw keys are tried in order; the first non-empty string wins.
+Each AMQ song object is translated to the flat five-field shape via the mapping below. For each flat key the candidate raw paths are walked in order; the first non-empty string wins.
 
-| Raw AMQ key(s) tried, in order                     | Flat key      | Required?                         |
-|----------------------------------------------------|---------------|-----------------------------------|
-| `songArtist`, `artist_name`                        | `artist_name` | yes                               |
-| `songName`, `song_name`                            | `song_name`   | yes                               |
-| `animeEnglishName`, `animeRomajiName`, `show_name` | `show_name`   | yes (English beats Romaji)        |
-| `vintage`, `animeVintage`                          | `vintage`     | yes                               |
-| `audio`, `media_url`, `MP3`, `mp3`                 | `media_url`   | no — defaults to `""`             |
+| Raw AMQ path(s) tried, in order                                             | Flat key      | Required?                   |
+|-----------------------------------------------------------------------------|---------------|-----------------------------|
+| `songInfo.artist`, `artist_name`                                            | `artist_name` | yes                         |
+| `songInfo.songName`, `song_name`                                            | `song_name`   | yes                         |
+| `songInfo.animeNames.english`, `songInfo.animeNames.romaji`, `show_name`    | `show_name`   | yes (English beats Romaji)  |
+| `songInfo.vintage`, `animeVintage`, `vintage`                               | `vintage`     | yes                         |
+| `videoUrl`, `audio`, `media_url`, `MP3`, `mp3`                              | `media_url`   | no — defaults to `""`       |
 
-A missing required field aborts the whole file with `INVALID_INPUT`, naming the index and the missing flat key. Extra AMQ-native fields (`type`, `fromList`, `startSample`, `videoLength`, etc.) are silently dropped.
+A missing required field aborts the whole file with `INVALID_INPUT`, naming the index and the missing flat key. Extra AMQ-native fields per-song — `songNumber`, `correctGuess`, `videoLength`, `type`, `typeNumber`, `annId`, `fromList`, `startSample`, `composerInfo`, `arrangerInfo`, `altAnimeNames`, `altAnimeNamesRomaji`, and the like — are silently dropped, as are top-level siblings of `songs` (`roomName`, `startTime`, `quizSettings`, etc.). The flat-alias single-key paths (`artist_name`, `song_name`, `show_name`, `vintage`, `media_url`, plus `audio` / `MP3` / `mp3` / `animeVintage`) are retained as fallbacks so already-flat callers keep working.
