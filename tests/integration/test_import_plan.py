@@ -550,3 +550,329 @@ def test_non_array_top_level_emits_invalid_input(
     rc, _out, err = _run_plan(pinned_call, tmp_app_root, pinned_now, str(bad))
     assert rc == 1
     assert err["error"]["code"] == "INVALID_INPUT"
+
+
+# ---------------------------------------------------------------------------
+# Bug 1 — raw AMQ export shape via --input-jsonpath must match flat via --input
+#
+# This is the Task 1.1 bug-condition exploration test. On unfixed code the
+# --input-jsonpath flag does not exist, so argparse exits 2 and the `rc == 0`
+# assertion below fails — that failure is the evidence that the bug exists.
+#
+# On the fixed CLI, --input-jsonpath accepts either payload shape (raw AMQ
+# object with a top-level `songs` array, or the legacy flat array) and
+# produces the same plan the legacy --input surface produces on the
+# equivalent flat payload. The raw AMQ payload below carries an extra
+# top-level `quizSettings` sibling on purpose: it proves that top-level
+# game-metadata siblings of `songs` are silently ignored.
+# ---------------------------------------------------------------------------
+
+
+def test_raw_amq_via_input_jsonpath_matches_flat_via_input(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+    insert_artist,
+    insert_song,
+    insert_show,
+) -> None:
+    # Seed state: one live artist, one live song under that artist, one live
+    # show. The AMQ payload (raw and flat) below maps to exactly this song,
+    # so both invocations should land the single entry in the `resolved`
+    # bucket with the same song_id / show_id.
+    artist_id = insert_artist(tmp_app_root, name="Artist A")
+    song_id = insert_song(tmp_app_root, name="Song A", artist_id=artist_id)
+    show_id = insert_show(tmp_app_root, name="Show A", vintage="Fall 2024")
+
+    # Raw AMQ export shape: a JSON object with a top-level `songs` array of
+    # AMQ song objects, plus an extra top-level sibling (`quizSettings`) to
+    # prove that the preprocessing stage drops it. The per-song keys use
+    # AMQ's native names (songArtist, songName, animeEnglishName,
+    # animeRomajiName, vintage, audio).
+    amq_raw_payload = {
+        "songs": [
+            {
+                "songArtist": "Artist A",
+                "songName": "Song A",
+                "animeEnglishName": "Show A",
+                "animeRomajiName": "Shou A",
+                "vintage": "Fall 2024",
+                "audio": "http://x/a",
+            }
+        ],
+        "quizSettings": {"gameMode": "Solo", "songCount": 1},
+    }
+    amq_raw_path = tmp_app_root / "amq_raw.json"
+    amq_raw_path.write_text(json.dumps(amq_raw_payload), encoding="utf-8")
+
+    # Flat five-field array: the already-flattened equivalent of the single
+    # AMQ song above. Must use the exact classifier-consumed keys.
+    amq_flat_payload = [
+        {
+            "artist_name": "Artist A",
+            "song_name": "Song A",
+            "show_name": "Show A",
+            "vintage": "Fall 2024",
+            "media_url": "http://x/a",
+        }
+    ]
+    amq_flat_path = tmp_app_root / "amq_flat.json"
+    amq_flat_path.write_text(json.dumps(amq_flat_payload), encoding="utf-8")
+
+    plan_raw_path = tmp_app_root / "plan_raw.json"
+    plan_flat_path = tmp_app_root / "plan_flat.json"
+
+    # Raw AMQ through the new --input-jsonpath flag.
+    rc_raw, _out_raw, err_raw = pinned_call(
+        "import_plan.py",
+        "--input-jsonpath",
+        str(amq_raw_path),
+        "--output",
+        str(plan_raw_path),
+        cwd=tmp_app_root,
+        now=pinned_now,
+    )
+    # On unfixed code this is the assertion that fires: argparse rejects
+    # --input-jsonpath with exit 2, so rc_raw == 2 and err_raw is argparse's
+    # usage message, not a JSON error envelope.
+    assert rc_raw == 0, err_raw
+
+    # Flat array through the legacy --input surface.
+    rc_flat, _out_flat, err_flat = pinned_call(
+        "import_plan.py",
+        "--input",
+        str(amq_flat_path),
+        "--output",
+        str(plan_flat_path),
+        cwd=tmp_app_root,
+        now=pinned_now,
+    )
+    assert rc_flat == 0, err_flat
+
+    # Byte-for-byte equality of the two plan files proves the raw AMQ payload
+    # is flattened to exactly the same intermediate representation the legacy
+    # surface consumes, and every downstream classification / bucketing /
+    # carry-through step is untouched by the new input channel.
+    raw_bytes = plan_raw_path.read_bytes()
+    flat_bytes = plan_flat_path.read_bytes()
+    assert raw_bytes == flat_bytes
+
+    # Sanity: the shared plan lands the single entry in `resolved` with the
+    # seeded song_id and show_id. Parsing either file is fine since they are
+    # byte-equal by the assertion above.
+    plan = json.loads(raw_bytes)
+    assert len(plan["resolved"]) == 1
+    assert len(plan["auto_completable"]) == 0
+    assert len(plan["ambiguous"]) == 0
+    item = plan["resolved"][0]
+    assert item["song_id"] == song_id
+    assert item["show_id"] == show_id
+    assert item["media_url"] == "http://x/a"
+
+
+# ---------------------------------------------------------------------------
+# Bug 1 — new CLI channel coverage
+#
+# Tasks 4.1 / 4.2 / 4.3 extend the Task 1.1 exploration test to cover the
+# remaining new input channels and payload shapes added by Bug 1's fix:
+#
+#   * 4.1 — `--input-jsonstr` carrying a raw AMQ JSON object matches legacy
+#           `--input` on the equivalent flat array file.
+#   * 4.2 — `--input-array` carrying a flat JSON array matches legacy
+#           `--input` on the same flat array written to a file.
+#   * 4.3 — `--input-array` rejects a raw AMQ object with INVALID_INPUT.
+#
+# The first two tests seed one live artist, one live song, and one live
+# show so the single entry lands in the `resolved` bucket, keeping the
+# plan comparison compact. The third test needs no seed because the
+# flat-only channel check fires before the classifier runs.
+# ---------------------------------------------------------------------------
+
+
+def test_input_jsonstr_raw_amq_matches_flat_via_input(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+    insert_artist,
+    insert_song,
+    insert_show,
+) -> None:
+    # Same seed shape as Task 1.1: a single AMQ song that resolves cleanly.
+    artist_id = insert_artist(tmp_app_root, name="Artist A")
+    song_id = insert_song(tmp_app_root, name="Song A", artist_id=artist_id)
+    show_id = insert_show(tmp_app_root, name="Show A", vintage="Fall 2024")
+
+    # Raw AMQ payload as a Python string — passed literally as an argv
+    # value to `--input-jsonstr`. Includes a top-level `quizSettings`
+    # sibling to prove the preprocessing stage drops game metadata.
+    amq_raw_jsonstr = json.dumps(
+        {
+            "songs": [
+                {
+                    "songArtist": "Artist A",
+                    "songName": "Song A",
+                    "animeEnglishName": "Show A",
+                    "animeRomajiName": "Shou A",
+                    "vintage": "Fall 2024",
+                    "audio": "http://x/a",
+                }
+            ],
+            "quizSettings": {"gameMode": "Solo", "songCount": 1},
+        }
+    )
+
+    # Equivalent flat array, written to a file for the legacy `--input`.
+    amq_flat_payload = [
+        {
+            "artist_name": "Artist A",
+            "song_name": "Song A",
+            "show_name": "Show A",
+            "vintage": "Fall 2024",
+            "media_url": "http://x/a",
+        }
+    ]
+    amq_flat_path = tmp_app_root / "amq_flat.json"
+    amq_flat_path.write_text(json.dumps(amq_flat_payload), encoding="utf-8")
+
+    plan_str_path = tmp_app_root / "plan_str.json"
+    plan_flat_path = tmp_app_root / "plan_flat.json"
+
+    rc_str, _out_str, err_str = pinned_call(
+        "import_plan.py",
+        "--input-jsonstr",
+        amq_raw_jsonstr,
+        "--output",
+        str(plan_str_path),
+        cwd=tmp_app_root,
+        now=pinned_now,
+    )
+    assert rc_str == 0, err_str
+
+    rc_flat, _out_flat, err_flat = pinned_call(
+        "import_plan.py",
+        "--input",
+        str(amq_flat_path),
+        "--output",
+        str(plan_flat_path),
+        cwd=tmp_app_root,
+        now=pinned_now,
+    )
+    assert rc_flat == 0, err_flat
+
+    # Byte-for-byte equality proves the inline raw AMQ payload flattens
+    # to the same intermediate representation the legacy surface consumes.
+    assert plan_str_path.read_bytes() == plan_flat_path.read_bytes()
+
+    # Sanity: single entry landed in `resolved` with the seeded ids.
+    plan = json.loads(plan_str_path.read_bytes())
+    assert len(plan["resolved"]) == 1
+    assert len(plan["auto_completable"]) == 0
+    assert len(plan["ambiguous"]) == 0
+    item = plan["resolved"][0]
+    assert item["song_id"] == song_id
+    assert item["show_id"] == show_id
+    assert item["media_url"] == "http://x/a"
+
+
+def test_input_array_flat_matches_flat_via_input(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+    insert_artist,
+    insert_song,
+    insert_show,
+) -> None:
+    # Same seed shape as Task 1.1: a single song that resolves cleanly.
+    artist_id = insert_artist(tmp_app_root, name="Artist A")
+    song_id = insert_song(tmp_app_root, name="Song A", artist_id=artist_id)
+    show_id = insert_show(tmp_app_root, name="Show A", vintage="Fall 2024")
+
+    # Flat five-field payload — same array goes through both channels.
+    amq_flat_payload = [
+        {
+            "artist_name": "Artist A",
+            "song_name": "Song A",
+            "show_name": "Show A",
+            "vintage": "Fall 2024",
+            "media_url": "http://x/a",
+        }
+    ]
+    amq_flat_jsonstr = json.dumps(amq_flat_payload)
+
+    amq_flat_path = tmp_app_root / "amq_flat.json"
+    amq_flat_path.write_text(amq_flat_jsonstr, encoding="utf-8")
+
+    plan_arr_path = tmp_app_root / "plan_arr.json"
+    plan_flat_path = tmp_app_root / "plan_flat.json"
+
+    rc_arr, _out_arr, err_arr = pinned_call(
+        "import_plan.py",
+        "--input-array",
+        amq_flat_jsonstr,
+        "--output",
+        str(plan_arr_path),
+        cwd=tmp_app_root,
+        now=pinned_now,
+    )
+    assert rc_arr == 0, err_arr
+
+    rc_flat, _out_flat, err_flat = pinned_call(
+        "import_plan.py",
+        "--input",
+        str(amq_flat_path),
+        "--output",
+        str(plan_flat_path),
+        cwd=tmp_app_root,
+        now=pinned_now,
+    )
+    assert rc_flat == 0, err_flat
+
+    # Byte-for-byte equality proves the inline flat array goes through
+    # the same URL-decode-and-normalise loop as the legacy file channel.
+    assert plan_arr_path.read_bytes() == plan_flat_path.read_bytes()
+
+    # Sanity: single entry landed in `resolved` with the seeded ids.
+    plan = json.loads(plan_arr_path.read_bytes())
+    assert len(plan["resolved"]) == 1
+    assert len(plan["auto_completable"]) == 0
+    assert len(plan["ambiguous"]) == 0
+    item = plan["resolved"][0]
+    assert item["song_id"] == song_id
+    assert item["show_id"] == show_id
+    assert item["media_url"] == "http://x/a"
+
+
+def test_input_array_rejects_raw_amq_with_invalid_input(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+) -> None:
+    # Raw AMQ payload as a string — the flat-only channel check should
+    # fire before the classifier runs, so no DB seed is needed.
+    amq_raw_jsonstr = json.dumps(
+        {
+            "songs": [
+                {
+                    "songArtist": "Artist A",
+                    "songName": "Song A",
+                    "animeEnglishName": "Show A",
+                    "vintage": "Fall 2024",
+                    "audio": "http://x/a",
+                }
+            ],
+            "quizSettings": {"gameMode": "Solo"},
+        }
+    )
+
+    rc, _out, err = pinned_call(
+        "import_plan.py",
+        "--input-array",
+        amq_raw_jsonstr,
+        cwd=tmp_app_root,
+        now=pinned_now,
+    )
+    assert rc == 1
+    # stderr is a JSON error envelope per `{"error": {"code", "message", "details"}}`.
+    envelope = json.loads(err)
+    assert envelope["error"]["code"] == "INVALID_INPUT"
+    assert "flat-only" in envelope["error"]["message"]

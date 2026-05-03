@@ -2,6 +2,14 @@
 
 This library tracks and reviews anime songs. An AI agent drives it through six skills covering three kinds of work: **querying** the library (search, duplicates, detail views), **memorising** songs via spaced-repetition review sessions, and **managing data** (AMQ imports, artist merges, cleanup). A user's request maps to one or two skills below — pick by user intent, then follow the link to that skill's `SKILL.md` body for the exact steps.
 
+## Using Dedicated Commands
+
+When a dedicated command exists for what you want to do, use it. `data.py` CRUD (`create`, `update`, `delete`, `bulk-reassign`) is a last-resort fallback for tasks no dedicated command covers.
+
+The dedicated commands preserve invariants that raw CRUD does not. For example, `learning.py graduate --ids <id>` sets `graduated = 1` *and* pins `level = MAX_LEVEL` — the invariant `graduated ↔ level = MAX_LEVEL` holds. `data.py update --kind learning --id <id> --data '{"graduated": 1}'` succeeds as SQL but violates that invariant, leaving the row in a state downstream reads misinterpret.
+
+The dedicated commands for each skill are listed in the Skills table below. If the task you need matches one of those skills, start there.
+
 ## Common Workflows
 
 ### Adding entries to the library

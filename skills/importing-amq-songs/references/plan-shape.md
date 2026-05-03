@@ -83,3 +83,30 @@ Object keyed by the stringified index of an ambiguous entry.
 ```
 
 `add_play_history.py` only cares about the `triples` array. The other fields are diagnostic.
+
+## Raw AMQ input mapping
+
+`--input-jsonpath` and `--input-jsonstr` also accept the raw AMQ export shape: a JSON object with a top-level `songs` array. Top-level siblings of `songs` (game metadata, quiz settings, export timestamps) are silently dropped.
+
+```json
+{
+  "songs": [
+    {"songArtist": "...", "songName": "...",
+     "animeEnglishName": "...", "animeRomajiName": "...",
+     "vintage": "Spring 2024", "audio": "https://..."}
+  ],
+  "quizSettings": {}
+}
+```
+
+Each AMQ song object is translated to the flat five-field shape via this mapping. For each flat key the candidate raw keys are tried in order; the first non-empty string wins.
+
+| Raw AMQ key(s) tried, in order                     | Flat key      | Required?                         |
+|----------------------------------------------------|---------------|-----------------------------------|
+| `songArtist`, `artist_name`                        | `artist_name` | yes                               |
+| `songName`, `song_name`                            | `song_name`   | yes                               |
+| `animeEnglishName`, `animeRomajiName`, `show_name` | `show_name`   | yes (English beats Romaji)        |
+| `vintage`, `animeVintage`                          | `vintage`     | yes                               |
+| `audio`, `media_url`, `MP3`, `mp3`                 | `media_url`   | no — defaults to `""`             |
+
+A missing required field aborts the whole file with `INVALID_INPUT`, naming the index and the missing flat key. Extra AMQ-native fields (`type`, `fromList`, `startSample`, `videoLength`, etc.) are silently dropped.

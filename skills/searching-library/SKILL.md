@@ -15,7 +15,22 @@ Most real questions start with a name ("who sings Song X?"). The answer always i
 2. Pick the right row with the user's help when needed.
 3. Pass that ID to the matching detail op (`song-detail`, `artist-detail`, `show-detail`).
 
-When the user asks a combined question — "songs in show X by artist Y", "which songs from show X does artist Y sing?" — reach for `search-songs` instead. It takes the song, show, and artist name filters together, ANDs the ones you pass, and returns each matching song with the detail-shaped rows already attached, so the follow-up `*-detail` calls are unnecessary.
+When the user asks a combined question — "songs in show X by artist Y", "which songs from show X does artist Y sing?" — reach for `search-songs` instead. See the next section for the worked flag pairings.
+
+## Combined searches: song + show + artist
+
+When the user's question names two or more of {song, show, artist}, reach for `scripts/query.py search-songs` first. It takes `--song-term`, `--show-term`, and `--artist-term` as optional flags, ANDs the ones you pass, and returns each matching song with its artist and linked shows already attached — one DB pass, byte-stable ordering.
+
+Map the intent to flags:
+
+- **song + show** ("the opening of Clannad"): `scripts/query.py search-songs --song-term "<song>" --show-term "<show>"`
+- **song + artist** ("the Lia song called Megumeru"): `scripts/query.py search-songs --song-term "<song>" --artist-term "<artist>"`
+- **artist + show** ("songs from FMA by Yui"): `scripts/query.py search-songs --artist-term "<artist>" --show-term "<show>"`
+- **all three** ("the Clannad OP by Lia called Megumeru"): `scripts/query.py search-songs --song-term "<song>" --show-term "<show>" --artist-term "<artist>"`
+
+Do **not** chain three single-kind `search` calls and intersect ids by hand. That's three DB roundtrips instead of one, the result rows don't carry the artist / show / `media_urls` attachments, and the ordering isn't byte-stable.
+
+See the Checklist entry below for the exact flag syntax and the `{filters, count, results}` envelope shape.
 
 ## Checklist: available ops
 

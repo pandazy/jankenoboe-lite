@@ -264,14 +264,14 @@ def _cmd_graduate(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
             )
             continue
         conn.execute(
-            "UPDATE learning SET graduated = 1, updated_at = ? WHERE id = ?",
-            (now, lid),
+            "UPDATE learning SET graduated = 1, level = ?, updated_at = ? WHERE id = ?",
+            (_common.MAX_LEVEL, now, lid),
         )
         updated.append(
             {
                 "id": lid,
-                "level": row["level"],
-                "display_level": row["level"] + 1,
+                "level": _common.MAX_LEVEL,
+                "display_level": _common.MAX_LEVEL + 1,
                 "graduated": 1,
                 "updated_at": now,
             }

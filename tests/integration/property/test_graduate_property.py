@@ -60,7 +60,12 @@ def test_graduate_sets_flag_and_second_call_is_noop(
         assert rc == 0, err
         mid = _select_learning(tmp_app_root, lid)
         assert mid["graduated"] == 1
-        assert mid["level"] == before["level"]
+        if before["graduated"] == 1:
+            # Already-graduated → no-op preservation path: level unchanged.
+            assert mid["level"] == before["level"]
+        else:
+            # Non-graduated → fix pins level to MAX_LEVEL.
+            assert mid["level"] == MAX_LEVEL
         assert mid["id"] == before["id"]
         assert mid["created_at"] == before["created_at"]
 
@@ -76,7 +81,10 @@ def test_graduate_sets_flag_and_second_call_is_noop(
         assert rc2 == 0, err2
         after = _select_learning(tmp_app_root, lid)
         assert after["graduated"] == 1
-        assert after["level"] == before["level"]
+        if before["graduated"] == 1:
+            assert after["level"] == before["level"]
+        else:
+            assert after["level"] == MAX_LEVEL
         assert after["id"] == before["id"]
         assert after["created_at"] == before["created_at"]
 
