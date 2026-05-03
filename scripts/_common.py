@@ -372,6 +372,53 @@ RE_LEARN_LEVEL: int = 7
 
 
 # ---------------------------------------------------------------------------
+# SQL fragments
+# ---------------------------------------------------------------------------
+
+# The three-branch due-time predicate — the single source of truth
+# consumed by both ``scripts/learning.py._DUE_SQL`` and
+# ``scripts/review.py._DUE_SQL``. Each caller composes its full
+# ``_DUE_SQL`` via f-string interpolation of this constant into its
+# own SELECT / FROM / non-time-WHERE / ORDER BY skeleton.
+#
+# Alias contract:
+#   Callers MUST alias the ``learning`` table as ``l``. The predicate
+#   only touches ``l.last_level_up_at``, ``l.level``, ``l.updated_at``,
+#   and ``l.level_up_path``; it does not reference ``s`` (song) or ``a``
+#   (artist).
+#
+# Bind contract:
+#   Callers MUST bind ``:offset`` (integer seconds) via
+#   ``conn.execute(sql, {"offset": int(args.offset)})``. ``:offset`` is
+#   a SQLite bind parameter and MUST NOT be interpolated into this
+#   constant as a string.
+#
+# Branches:
+#   A) ``level = 0`` and ``last_level_up_at > 0`` — due when
+#      ``now + offset >= last_level_up_at + 300``.
+#   B) ``level = 0`` and ``last_level_up_at = 0`` — due when
+#      ``now + offset >= updated_at + 300`` (never-reviewed rows fall
+#      back to ``updated_at``).
+#   C) ``level > 0`` — due when
+#      ``level_up_path[level] * 86400 + last_level_up_at <= now + offset``
+#      (wait-days path from the stored ``level_up_path`` JSON).
+DUE_TIME_CONDITION_SQL = """(
+    (l.last_level_up_at > 0 AND l.level = 0
+     AND (CAST(strftime('%s', 'now') AS INTEGER) + :offset)
+         >= (l.last_level_up_at + 300))
+    OR
+    (l.last_level_up_at = 0 AND l.level = 0
+     AND (CAST(strftime('%s', 'now') AS INTEGER) + :offset)
+         >= (l.updated_at + 300))
+    OR
+    (l.level > 0
+     AND (json_extract(l.level_up_path, '$[' || l.level || ']') * 86400
+          + l.last_level_up_at)
+         <= (CAST(strftime('%s', 'now') AS INTEGER) + :offset))
+)"""
+
+
+# ---------------------------------------------------------------------------
 # Generic table CRUD and search
 # ---------------------------------------------------------------------------
 

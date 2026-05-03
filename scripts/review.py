@@ -61,7 +61,7 @@ def _build_parser() -> argparse.ArgumentParser:
 # pulls review.py needs on top of that.
 # ---------------------------------------------------------------------------
 
-_DUE_SQL = """
+_DUE_SQL = f"""
 SELECT
     l.id                   AS learning_id,
     l.song_id              AS song_id,
@@ -81,20 +81,7 @@ JOIN artist a ON a.id = s.artist_id
 WHERE s.status = 0
   AND a.status = 0
   AND l.graduated = 0
-  AND (
-      (l.last_level_up_at > 0 AND l.level = 0
-       AND (CAST(strftime('%s', 'now') AS INTEGER) + :offset)
-           >= (l.last_level_up_at + 300))
-      OR
-      (l.last_level_up_at = 0 AND l.level = 0
-       AND (CAST(strftime('%s', 'now') AS INTEGER) + :offset)
-           >= (l.updated_at + 300))
-      OR
-      (l.level > 0
-       AND (json_extract(l.level_up_path, '$[' || l.level || ']') * 86400
-            + l.last_level_up_at)
-           <= (CAST(strftime('%s', 'now') AS INTEGER) + :offset))
-  )
+  AND {_common.DUE_TIME_CONDITION_SQL}
 ORDER BY l.level DESC, l.id ASC
 """
 

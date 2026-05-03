@@ -5,23 +5,22 @@
   list) is appended below whatever you write here.
 -->
 
-## jankenoboe-lite v0.1.3
+## jankenoboe-lite v0.1.4
 
-One small consistency fix on the review surface. Additive, no
-migration, no change to existing callers.
+One internal refactor. Pure structural change, byte-identical
+observable behavior.
 
 ### Highlights
 
-- **`review.py song-review` now accepts `--offset N`.** Mirrors the
-  flag `learning.py due` has had all along. Agents can now render the
-  HTML review page for a shifted wall clock —
-  `review.py song-review --offset 86400` previews tomorrow's session
-  the same way `learning.py due --offset 86400` previews its row
-  count. The rendered HTML reflects the shifted row set, and the
-  Success_Envelope echoes `offset` back as a third field next to
-  `path` and `due_count`. No-flag / `--offset 0` invocations produce
-  byte-identical HTML and the same envelope plus one new `offset: 0`
-  key.
+- **Deduplicated the due-time predicate.** Both `learning.py due` and
+  `review.py song-review` used to carry their own near-copy of the
+  three-branch "is this record due?" SQL. The predicate now lives in
+  exactly one place — `scripts/_common.py` as the module-level
+  constant `DUE_TIME_CONDITION_SQL` — and both callers compose their
+  full query via f-string interpolation of that constant. Fixes the
+  class of drift that caused v0.1.2's missing-offset regression on
+  the review page. Every row set, HTML byte, and JSON envelope is
+  byte-identical to v0.1.3.
 
 ### Install
 
@@ -48,5 +47,5 @@ map.
 
 - `ruff check` + `ruff format --check` clean
 - `mypy` clean
-- 478 tests passing with 95% line coverage across `scripts/`
+- 480 tests passing with 95% line coverage across `scripts/`
   (enforced by `tests/coverage_runner.py`)
