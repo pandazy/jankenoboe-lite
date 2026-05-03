@@ -547,6 +547,123 @@ def test_missing_marker_raises_internal_error(tmp_app_root, pinned_call) -> None
 
 
 # ---------------------------------------------------------------------------
+# --offset surface parity with learning.py due (R2.1, R2.4, R2.6)
+# ---------------------------------------------------------------------------
+
+
+def test_song_review_accepts_offset_flag(tmp_app_root, call_script) -> None:
+    """R2.1 / R2.4: ``song-review`` accepts ``--offset N`` and echoes it.
+
+    **Validates: Requirements R2.1, R2.4, R2.6**
+
+    Bug condition exploration test. On v0.1.2 unfixed code, argparse
+    rejects ``--offset 86400`` as an unrecognised argument (exit 2,
+    stderr ``unrecognized arguments: --offset 86400``). On fixed code,
+    the flag is accepted, the Success_Envelope carries ``offset: 86400``
+    alongside the existing ``path`` and ``due_count`` fields, and the
+    empty DB yields ``due_count == 0``.
+
+    Zero rows are seeded on purpose — this test asserts the argparse +
+    envelope surface, not row selection. Row-set equality with
+    ``learning.py due --offset N`` is pinned by the Task 4 parity test.
+    """
+    rc, out, err = call_script("review.py", "song-review", "--offset", "86400", cwd=tmp_app_root)
+    assert rc == 0, err
+    assert err == ""
+    payload = json.loads(out)
+    assert isinstance(payload["path"], str)
+    assert payload["due_count"] == 0
+    assert payload["offset"] == 86400
+
+
+def test_song_review_offset_matches_learning_due(
+    tmp_app_root,
+    call_script,
+    pinned_call,
+    insert_artist,
+    insert_song,
+    insert_learning,
+) -> None:
+    """R2.2, R2.3, R2.4, R2.5: ``review.py`` and ``learning.py`` agree on row set.
+
+    **Validates: Requirements R2.2, R2.3, R2.4, R2.5**
+
+    Seed one level-0 learning row whose ``last_level_up_at = sqlite_now -
+    200`` — 100s shy of the 300s level-0 threshold. At ``--offset 0`` it
+    is not due; at ``--offset 200`` it crosses the boundary and becomes
+    due. Run both ``learning.py due --offset 200`` and ``review.py
+    song-review --offset 200`` against the same DB + clock, extract the
+    payload from review.py's rendered HTML via ``_load_data_block``, and
+    assert set equality between the ``learning_id`` set (review.py) and
+    the ``id`` set (learning.py).
+
+    Set equality — not sequence equality. Both scripts order by ``level
+    DESC, id ASC``, but the fix-checking property is row-set equality.
+    """
+    aid = insert_artist(tmp_app_root, name="A")
+    sid = insert_song(tmp_app_root, name="S", artist_id=aid)
+    sqlite_now = _sqlite_now(tmp_app_root / "db" / "datasource.db")
+    lid = insert_learning(
+        tmp_app_root,
+        song_id=sid,
+        level=0,
+        graduated=0,
+        last_level_up_at=sqlite_now - 200,
+        updated_at=sqlite_now - 200,
+    )
+
+    learning_rc, learning_out, _ = call_script(
+        "learning.py", "due", "--offset", "200", cwd=tmp_app_root
+    )
+    assert learning_rc == 0
+    learning_results = json.loads(learning_out)["results"]
+    learning_ids = {r["id"] for r in learning_results}
+
+    review_rc, review_out, _ = pinned_call(
+        "review.py",
+        "song-review",
+        "--offset",
+        "200",
+        cwd=tmp_app_root,
+        now=1_700_000_000,
+    )
+    assert review_rc == 0
+    review_envelope = json.loads(review_out)
+    expected = tmp_app_root / "output" / "review_1700000000.html"
+    payload = _load_data_block(expected.read_text("utf-8"))
+    review_ids = {s["learning_id"] for s in payload["due_songs"]}
+
+    assert learning_ids == review_ids
+    assert lid in learning_ids
+    assert lid in review_ids
+    assert review_envelope["offset"] == 200
+    assert isinstance(review_envelope["path"], str)
+    assert isinstance(review_envelope["due_count"], int)
+
+
+def test_song_review_envelope_key_set_with_no_offset(
+    tmp_app_root,
+    pinned_call,
+) -> None:
+    """R3.1, R3.7: no-flag envelope is exactly ``{path, due_count, offset}``.
+
+    **Validates: Requirements R3.1, R3.7**
+
+    Preservation: a zero-offset (no ``--offset``) invocation emits a
+    Success_Envelope with exactly three top-level keys — the two v0.1.2
+    keys ``path`` and ``due_count`` plus the one new ``offset`` key with
+    integer value 0. This codifies the "one new key, named ``offset``,
+    value 0" contract from R2.4 + R3.7.
+    """
+    rc, out, _err, expected = _run_review_pinned(pinned_call, tmp_app_root, 1_700_000_000)
+    assert rc == 0
+    assert set(out.keys()) == {"path", "due_count", "offset"}
+    assert out["offset"] == 0
+    assert out["path"] == str(expected)
+    assert out["due_count"] == 0
+
+
+# ---------------------------------------------------------------------------
 # Bare `--help` / no-args behavior (R2.4)
 # ---------------------------------------------------------------------------
 

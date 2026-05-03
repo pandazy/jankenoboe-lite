@@ -5,35 +5,23 @@
   list) is appended below whatever you write here.
 -->
 
-## jankenoboe-lite v0.1.2
+## jankenoboe-lite v0.1.3
 
-One critical importer fix plus two small quality-of-life touches on
-the agent-facing docs. Nothing to migrate — the legacy CLI, on-disk
-schema, and existing scripted integrations are all unchanged.
+One small consistency fix on the review surface. Additive, no
+migration, no change to existing callers.
 
 ### Highlights
 
-- **AMQ importer now accepts the real AMQ export.** v0.1.1's field
-  mapping was guessed from the design doc and didn't match the actual
-  file AMQ produces — every user hit `INVALID_INPUT missing_field=artist_name`
-  on the first real import. The preprocessor now walks the real nested
-  paths (`songInfo.artist`, `songInfo.songName`,
-  `songInfo.animeNames.english` / `songInfo.animeNames.romaji`,
-  `songInfo.vintage`, top-level `videoUrl`) instead of the guessed
-  flat keys. A committed copy of a real AMQ export drives an
-  end-to-end integration test so the mapping can't drift silently
-  again.
-- **Skill docs: "if a script fails, report it — don't patch it."**
-  `skills/README.md` gained a short top-of-file section telling
-  agents to surface script errors to the user — code, message, and
-  input — instead of editing the shipped `scripts/` tree from inside
-  a task. Fixes go through the release pipeline, not through session
-  patches.
-- **Faster property-based test runs.** The PBT iteration count
-  dropped from 20 to 5, cutting the full test-suite wall time from
-  ~5.8 min to ~2.8 min. Aggregate randomness across the ~60
-  property-based tests is still plenty for catching regressions; the
-  bigger win is that `make check` stops being a coffee break.
+- **`review.py song-review` now accepts `--offset N`.** Mirrors the
+  flag `learning.py due` has had all along. Agents can now render the
+  HTML review page for a shifted wall clock —
+  `review.py song-review --offset 86400` previews tomorrow's session
+  the same way `learning.py due --offset 86400` previews its row
+  count. The rendered HTML reflects the shifted row set, and the
+  Success_Envelope echoes `offset` back as a third field next to
+  `path` and `due_count`. No-flag / `--offset 0` invocations produce
+  byte-identical HTML and the same envelope plus one new `offset: 0`
+  key.
 
 ### Install
 
@@ -60,5 +48,5 @@ map.
 
 - `ruff check` + `ruff format --check` clean
 - `mypy` clean
-- 475 tests passing with 95% line coverage across `scripts/`
+- 478 tests passing with 95% line coverage across `scripts/`
   (enforced by `tests/coverage_runner.py`)
