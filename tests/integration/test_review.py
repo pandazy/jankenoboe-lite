@@ -709,3 +709,48 @@ def test_review_does_not_modify_db(
     assert rc == 0, err
     after = db.read_bytes()
     assert before == after
+
+
+# ---------------------------------------------------------------------------
+# YouTube-search fallback machinery — bytes-in-template regression guard.
+# ---------------------------------------------------------------------------
+
+
+def test_template_ships_youtube_search_link_machinery() -> None:
+    """``scripts/review_template.html`` ships the YouTube-search machinery.
+
+    Plain bytes-in-file substring checks — no DOM parsing, no JS parsing,
+    no payload, no subprocess. Guards against a future refactor silently
+    dropping the `renderSearchLink` helper, the YouTube URL, the
+    `encodeURIComponent` call, the anchor class, the aria-label text, or
+    the noopener/noreferrer contract.
+    """
+    template_path = (
+        pathlib.Path(__file__).resolve().parent.parent.parent / "scripts" / "review_template.html"
+    )
+    content = template_path.read_bytes()
+
+    assert b"renderSearchLink" in content, "template must ship the renderSearchLink helper"
+    assert b"https://www.youtube.com/results?search_query=" in content, (
+        "template must reference the YouTube search URL literal"
+    )
+    assert b"encodeURIComponent" in content, (
+        "template must call encodeURIComponent for client-side URL encoding"
+    )
+    assert content.count(b"yt-search") >= 2, (
+        "template must reference the `yt-search` class in at least two "
+        "places: the CSS selector (.yt-search) and the JS class assignment"
+    )
+    assert b"noopener noreferrer" in content, (
+        "template must ship the `noopener noreferrer` link-safety contract "
+        "on the rel attribute of the search link"
+    )
+
+    aria_idx = content.find(b"aria-label")
+    phrase_idx = content.find(b"Search YouTube")
+    assert aria_idx >= 0, "template must set aria-label on the search link"
+    assert phrase_idx >= 0, 'template must ship the "Search YouTube" aria-label phrasing'
+    assert abs(aria_idx - phrase_idx) < 500, (
+        "`aria-label` and `Search YouTube` must appear within 500 bytes "
+        "of each other (proves the helper that sets the label still exists)"
+    )

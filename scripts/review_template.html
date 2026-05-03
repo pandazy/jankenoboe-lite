@@ -5,60 +5,134 @@
   <title>Songs due for review</title>
   <style>
     /* Base layout. */
-    body { font-family: system-ui, sans-serif; max-width: 780px;
-           margin: 2em auto; padding: 0 1em; color: #222; }
-    h1 { margin-bottom: 0.2em; }
-    .meta { color: #666; margin-bottom: 1.5em; }
+    body { font-family: system-ui, -apple-system, sans-serif;
+           max-width: 820px; margin: 2em auto; padding: 0 1em;
+           color: #1a1a1a; background: #fafbfc; line-height: 1.5; }
+    h1 { margin-bottom: 0.2em; font-size: 1.8em; letter-spacing: -0.01em; }
+    .meta { color: #6b7280; margin-bottom: 1.5em; font-size: 0.95em; }
 
     /* Noscript fallback: shown by default, hidden once the Inline_Script
        tags <body> as js-active. */
     .js-required { color: #a00; font-weight: 600; padding: 1em 0; }
     body.js-active .js-required { display: none; }
 
-    /* Per-item structure (built at runtime by the Inline_Script). */
-    ol { list-style-position: inside; padding: 0; }
-    li[data-level] { padding: 0.8em 0; border-top: 1px solid #eee;
-                     cursor: pointer; }
-    li[data-level]:first-child { border-top: 0; }
+    /* Song cards — each <li> renders as a real panel with its own
+       background, subtle shadow, and rounded corners. */
+    ol { list-style-position: outside; padding: 0; margin: 0; }
+    ol { counter-reset: song-counter; }
+    li[data-level] { display: block;
+                     padding: 1em 1.2em;
+                     margin: 0 0 0.9em 0;
+                     background: #ffffff;
+                     border: 1px solid #e5e7eb;
+                     border-radius: 10px;
+                     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+                     cursor: pointer;
+                     transition: box-shadow 0.15s ease,
+                                 border-color 0.15s ease; }
+    li[data-level]:hover { box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+                           border-color: #d1d5db; }
+    li[data-level]::before { counter-increment: song-counter;
+                             content: counter(song-counter) ".";
+                             color: #9ca3af; font-weight: 500;
+                             margin-right: 0.5em; font-size: 0.9em; }
 
-    /* Level pill. */
-    .level { display: inline-block; padding: 0.1em 0.6em;
-             background: #0a84ff; color: white; border-radius: 3px;
-             font-size: 0.85em; margin-right: 0.6em; }
+    /* Level pill — softer pastel, less shouty than solid blue. */
+    .level { display: inline-block; padding: 0.15em 0.65em;
+             background: #eff6ff; color: #1d4ed8;
+             border: 1px solid #dbeafe;
+             border-radius: 999px;
+             font-size: 0.78em; font-weight: 600;
+             margin-right: 0.6em;
+             letter-spacing: 0.01em; }
 
     /* Song title + inline name_context. */
-    .song { font-size: 1.15em; font-weight: 600; display: inline-block; }
-    .name-context { color: #888; font-style: italic; margin-left: 0.3em; }
+    .song { font-size: 1.1em; font-weight: 600; color: #111827;
+            display: inline-block; }
+    .name-context { color: #6b7280; font-style: italic;
+                    margin-left: 0.3em; font-weight: 400; }
 
-    /* Artist line sits under the title. */
-    .artist { color: #333; margin-top: 0.1em; }
+    /* Artist line sits under the title. Wraps as a unit on narrow viewports. */
+    .artist { color: #374151; margin-top: 0.35em;
+              display: flex; flex-wrap: wrap;
+              align-items: center; gap: 0.4em;
+              font-weight: 500; font-size: 0.98em; }
 
-    /* Shows section and per-show sub-blocks. */
-    .shows-section { margin-top: 0.4em; color: #555; font-size: 0.92em; }
-    .show-block { margin: 0.35em 0 0 1.2em; }
-    .show-name { font-weight: 500; color: #222; }
-    .show-meta { color: #777; font-size: 0.9em; }
+    /* Shows section — "Shows" label + stacked show chips. */
+    .shows-section { margin-top: 0.75em; color: #6b7280;
+                     font-size: 0.85em; font-weight: 500;
+                     text-transform: uppercase;
+                     letter-spacing: 0.04em; }
 
-    /* Per-show link list. */
-    .links { margin: 0.2em 0 0 0; padding-left: 1.4em; font-size: 0.9em; }
-    .links li { list-style-type: disc; }
-    .links a { color: #0a84ff; text-decoration: none; }
+    /* Each show renders as a distinct "chip" — its own background,
+       rounded corners, left accent bar. Shows stack vertically. */
+    .show-block { display: block;
+                  margin: 0.5em 0 0 0;
+                  padding: 0.55em 0.8em;
+                  background: #f9fafb;
+                  border: 1px solid #e5e7eb;
+                  border-left: 3px solid #a5b4fc;
+                  border-radius: 6px;
+                  color: #1f2937; }
+    /* The show header row (name + copy + meta + globe) sits on one line,
+       wraps gracefully on narrow viewports. */
+    .show-head { display: flex; flex-wrap: wrap;
+                 align-items: center; gap: 0.35em; }
+    .show-name { font-weight: 600; color: #111827; font-size: 0.98em; }
+    .show-meta { color: #6b7280; font-size: 0.88em;
+                 font-weight: 400; font-style: normal;
+                 text-transform: none; letter-spacing: normal; }
+
+    /* Per-show link list — stacked BELOW the show header, not beside. */
+    .links { display: block;
+             margin: 0.4em 0 0 0;
+             padding: 0; list-style: none;
+             font-size: 0.9em; }
+    .links li { padding: 0.1em 0; }
+    .links li::before { content: "↳ "; color: #9ca3af;
+                        margin-right: 0.15em; }
+    .links a { color: #2563eb; text-decoration: none; }
     .links a:hover { text-decoration: underline; }
 
-    /* Copy buttons (R-RH-4). No onclick, no icons from CDN. */
-    .copy-btn { margin-left: 0.4em; font-size: 0.78em;
-                padding: 0 0.45em; cursor: pointer;
-                border: 1px solid #ccc; border-radius: 3px;
-                background: #fafafa; color: #444; }
-    .copy-btn:hover { background: #efefef; }
-    .copy-btn.flash { background: #d5f5d5; border-color: #8fd18f; }
+    /* Copy buttons. */
+    .copy-btn { font-size: 0.72em;
+                padding: 0.1em 0.5em; cursor: pointer;
+                border: 1px solid #e5e7eb; border-radius: 4px;
+                background: #ffffff; color: #6b7280;
+                font-weight: 500; transition: all 0.12s ease;
+                line-height: 1.4;
+                vertical-align: middle; }
+    .copy-btn:hover { background: #f3f4f6; color: #1f2937;
+                      border-color: #d1d5db; }
+    .copy-btn.flash { background: #dcfce7; border-color: #86efac;
+                      color: #166534; }
 
-    /* Session "done" highlight (R-RH-5). Cosmetic only. */
-    li[data-level].done { opacity: 0.45; background: #f5f5f5; }
+    /* YouTube-search fallback anchor. Small, accent-colored, with
+       hover and focus affordances. */
+    .yt-search { display: inline-flex; align-items: center;
+                 justify-content: center;
+                 width: 22px; height: 22px;
+                 color: #6366f1; text-decoration: none;
+                 border-radius: 50%;
+                 line-height: 1;
+                 vertical-align: middle;
+                 transition: background 0.12s ease, color 0.12s ease; }
+    .yt-search:hover { background: #eef2ff; color: #4338ca; }
+    .yt-search:focus-visible { outline: 2px solid #6366f1;
+                               outline-offset: 2px; }
+    .yt-search-icon { display: block; }
+
+    /* Session "done" highlight — dims the whole card. */
+    li[data-level].done { opacity: 0.5;
+                          background: #f3f4f6; }
+    li[data-level].done .show-block { background: #ffffff; }
 
     /* Empty state. */
-    .empty-state { color: #777; font-style: italic;
-                   padding: 2em 0; text-align: center; }
+    .empty-state { color: #6b7280; font-style: italic;
+                   padding: 3em 0; text-align: center;
+                   background: #ffffff;
+                   border: 1px dashed #d1d5db;
+                   border-radius: 10px; }
   </style>
 </head>
 <body>
@@ -113,25 +187,84 @@
         return a;
       }
 
-      function renderShowBlock(sh) {
+      function renderSearchLink(songName, targetName, targetKind) {
+        // targetKind is 'artist' or 'show' — controls aria-label phrasing.
+        var query = songName + ' ' + targetName;
+        var href = 'https://www.youtube.com/results?search_query='
+                 + encodeURIComponent(query);
+
+        var a = document.createElement('a');
+        a.className = 'yt-search';
+        a.setAttribute('href', href);
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener noreferrer');
+        var label = targetKind === 'artist'
+          ? ('Search YouTube for ' + songName + ' by ' + targetName)
+          : ('Search YouTube for ' + songName + ' in ' + targetName);
+        a.setAttribute('aria-label', label);
+
+        // Inline Globe_Icon SVG via SVG namespace so children are real
+        // SVGElements, not HTMLUnknownElements.
+        var SVG_NS = 'http://www.w3.org/2000/svg';
+        var svg = document.createElementNS(SVG_NS, 'svg');
+        svg.setAttribute('class', 'yt-search-icon');
+        svg.setAttribute('width', '16');
+        svg.setAttribute('height', '16');
+        svg.setAttribute('viewBox', '0 0 16 16');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.setAttribute('focusable', 'false');
+
+        var circle = document.createElementNS(SVG_NS, 'circle');
+        circle.setAttribute('cx', '8'); circle.setAttribute('cy', '8');
+        circle.setAttribute('r', '6.5'); circle.setAttribute('fill', 'none');
+        circle.setAttribute('stroke', 'currentColor');
+        circle.setAttribute('stroke-width', '1');
+        svg.appendChild(circle);
+
+        var ellipse = document.createElementNS(SVG_NS, 'ellipse');
+        ellipse.setAttribute('cx', '8'); ellipse.setAttribute('cy', '8');
+        ellipse.setAttribute('rx', '3'); ellipse.setAttribute('ry', '6.5');
+        ellipse.setAttribute('fill', 'none');
+        ellipse.setAttribute('stroke', 'currentColor');
+        ellipse.setAttribute('stroke-width', '1');
+        svg.appendChild(ellipse);
+
+        var line = document.createElementNS(SVG_NS, 'line');
+        line.setAttribute('x1', '1.5'); line.setAttribute('y1', '8');
+        line.setAttribute('x2', '14.5'); line.setAttribute('y2', '8');
+        line.setAttribute('stroke', 'currentColor');
+        line.setAttribute('stroke-width', '1');
+        svg.appendChild(line);
+
+        a.appendChild(svg);
+        return a;
+      }
+
+      function renderShowBlock(sh, songName) {
         var block = document.createElement('div');
         block.className = 'show-block';
+
+        var head = document.createElement('div');
+        head.className = 'show-head';
 
         var name = document.createElement('span');
         name.className = 'show-name';
         name.textContent = sh.show_name;
-        block.appendChild(name);
+        head.appendChild(name);
 
-        block.appendChild(copyButton(sh.show_id));
+        head.appendChild(copyButton(sh.show_id));
 
         var extras = [sh.show_name_romaji, sh.show_vintage, sh.show_s_type]
           .filter(function (x) { return x; });
         if (extras.length > 0) {
           var meta = document.createElement('span');
           meta.className = 'show-meta';
-          meta.textContent = ' — ' + extras.join(', ');
-          block.appendChild(meta);
+          meta.textContent = '· ' + extras.join(' · ');
+          head.appendChild(meta);
         }
+
+        head.appendChild(renderSearchLink(songName, sh.show_name, 'show'));
+        block.appendChild(head);
 
         if (sh.media_urls && sh.media_urls.length > 0) {
           var ul = document.createElement('ul');
@@ -181,14 +314,15 @@
           ac.textContent = '(' + s.artist_name_context + ')';
           artist.appendChild(ac);
         }
+        artist.appendChild(renderSearchLink(s.song_name, s.artist_name, 'artist'));
         li.appendChild(artist);
 
         if (s.shows && s.shows.length > 0) {
           var section = document.createElement('div');
           section.className = 'shows-section';
-          section.textContent = 'Shows:';
+          section.textContent = 'Shows';
           for (var i = 0; i < s.shows.length; i += 1) {
-            section.appendChild(renderShowBlock(s.shows[i]));
+            section.appendChild(renderShowBlock(s.shows[i], s.song_name));
           }
           li.appendChild(section);
         }
