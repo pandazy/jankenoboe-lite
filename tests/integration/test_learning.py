@@ -10,6 +10,8 @@ import json
 import sqlite3
 from typing import Any
 
+import pytest
+
 from scripts import _common
 
 
@@ -351,12 +353,104 @@ def test_graduate_flips_graduated_flag(
     rc, out, err = _run(pinned_call, tmp_app_root, pinned_now, "graduate", "--ids", lid)
     assert rc == 0, err
     assert out["updated"][0]["graduated"] == 1
-    assert out["updated"][0]["display_level"] == 6
+    assert out["updated"][0]["level"] == _common.MAX_LEVEL
+    assert out["updated"][0]["display_level"] == _common.MAX_LEVEL + 1
     assert out["updated"][0]["updated_at"] == pinned_now
 
     row = _select_learning(tmp_app_root, lid)
     assert row["graduated"] == 1
+    assert row["level"] == _common.MAX_LEVEL
     assert row["updated_at"] == pinned_now
+
+
+def test_graduate_pins_level_to_max_level_on_below_max_start(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+    insert_artist,
+    insert_song,
+    insert_learning,
+) -> None:
+    """R2.10, R2.11: graduate a non-graduated row whose level < MAX_LEVEL must
+    pin ``level`` to ``_common.MAX_LEVEL`` (19) AND set ``graduated = 1``,
+    leaving ``id``/``song_id``/``created_at`` unchanged. The response payload
+    must report ``level = 19`` and ``display_level = 20``.
+
+    This is the Bug 2 exploration test: on unfixed code ``graduate`` flips
+    ``graduated`` but leaves ``level`` at its previous value (here, 3). The
+    ``row["level"] == _common.MAX_LEVEL`` assertion FAILS — that failure
+    confirms the bug exists.
+    """
+    aid = insert_artist(tmp_app_root, name="A")
+    sid = insert_song(tmp_app_root, name="S", artist_id=aid)
+    lid = insert_learning(tmp_app_root, song_id=sid, level=3, graduated=0)
+
+    before = _select_learning(tmp_app_root, lid)
+
+    rc, out, err = _run(pinned_call, tmp_app_root, pinned_now, "graduate", "--ids", lid)
+    assert rc == 0, err
+
+    # Response payload reports the pinned level.
+    assert len(out["updated"]) == 1
+    payload = out["updated"][0]
+    assert payload["id"] == lid
+    assert payload["level"] == _common.MAX_LEVEL
+    assert payload["display_level"] == _common.MAX_LEVEL + 1
+    assert payload["graduated"] == 1
+
+    # Re-read row matches.
+    row = _select_learning(tmp_app_root, lid)
+    assert row["level"] == _common.MAX_LEVEL
+    assert row["graduated"] == 1
+    # Identity/creation invariants preserved.
+    assert row["id"] == before["id"]
+    assert row["song_id"] == before["song_id"]
+    assert row["created_at"] == before["created_at"]
+
+
+@pytest.mark.parametrize("start_level", [0, 3, 10, 18])
+def test_graduate_pins_level_to_max_for_all_below_max_starts(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+    insert_artist,
+    insert_song,
+    insert_learning,
+    start_level: int,
+) -> None:
+    """R2.10, R2.11, R3.9: for every below-MAX starting level, ``graduate`` pins
+    ``level`` to ``MAX_LEVEL`` and sets ``graduated = 1``. The response payload
+    and the re-read row must both report the pinned state. ``id``, ``song_id``,
+    ``created_at``, ``level_up_path``, and ``last_level_up_at`` are preserved
+    (R3.9)."""
+    aid = insert_artist(tmp_app_root, name="A")
+    sid = insert_song(tmp_app_root, name=f"S-{start_level}", artist_id=aid)
+    lid = insert_learning(tmp_app_root, song_id=sid, level=start_level, graduated=0)
+
+    before = _select_learning(tmp_app_root, lid)
+
+    rc, out, err = _run(pinned_call, tmp_app_root, pinned_now, "graduate", "--ids", lid)
+    assert rc == 0, err
+
+    # Response payload reports the pinned state.
+    assert len(out["updated"]) == 1
+    payload = out["updated"][0]
+    assert payload["id"] == lid
+    assert payload["level"] == _common.MAX_LEVEL
+    assert payload["display_level"] == _common.MAX_LEVEL + 1
+    assert payload["graduated"] == 1
+
+    # Re-read row agrees with the payload.
+    row = _select_learning(tmp_app_root, lid)
+    assert row["level"] == _common.MAX_LEVEL
+    assert row["graduated"] == 1
+
+    # R3.9: identity, creation, and level-up-history fields are preserved.
+    assert row["id"] == before["id"]
+    assert row["song_id"] == before["song_id"]
+    assert row["created_at"] == before["created_at"]
+    assert row["level_up_path"] == before["level_up_path"]
+    assert row["last_level_up_at"] == before["last_level_up_at"]
 
 
 def test_graduate_second_call_is_noop(

@@ -5,45 +5,46 @@
   list) is appended below whatever you write here.
 -->
 
-## jankenoboe-lite — first release
+## jankenoboe-lite v0.1.1
 
-A small local app for memorising anime songs. One SQLite file, pure
-Python stdlib at runtime, driven by an AI agent reading Claude-style
-skill docs rather than by the user typing commands.
+Four fixes on the importer, learning, and skills-documentation
+surfaces. Nothing to migrate — the legacy CLI calls and the on-disk
+schema are unchanged.
 
-Built to drop onto restricted hosts — the code-execution sandbox
-attached to an AI agent, or any Python 3.10+ environment where you
-can't (or don't want to) run `pip install`.
+### Highlights
 
-## What's in the box
+- **AMQ importer accepts the raw AMQ JSON directly.** Three new
+  mutually-exclusive flags on `scripts/import_plan.py` —
+  `--input-jsonpath PATH` (raw AMQ or flat array), `--input-jsonstr
+  JSON` (inline JSON, both shapes), `--input-array JSON` (inline
+  flat-only). The legacy `--input` / positional path keeps working
+  exactly as before.
+- **`learning.py graduate` now pins `level` to `MAX_LEVEL`.** The
+  same UPDATE that sets `graduated = 1` also sets `level = 19`, so a
+  song graduated via the explicit command ends in the same row state
+  as one graduated via `levelup` at the top of the spaced-repetition
+  curve.
+- **Skill docs gained a dedicated-command preference.**
+  `skills/README.md` now steers agents toward dedicated commands
+  (e.g. `learning.py graduate`) over raw `data.py` CRUD for work that
+  has a dedicated path, with the graduate invariant called out as
+  the worked counter-example.
+- **Combined-search examples in the search skill.**
+  `skills/searching-library/SKILL.md` gained a worked-examples
+  section covering the four combined-intent pairings (song+show,
+  song+artist, artist+show, all-three) mapped onto the existing
+  `query.py search-songs` flags.
 
-- **Six skills** under `skills/` covering the full workflow:
-  `adding-songs-to-learning`, `reviewing-songs`, `searching-library`,
-  `importing-amq-songs`, `merging-artists`, `cleaning-up-dead-records`.
-- **Twelve runtime scripts** under `scripts/` — stdlib only, no
-  third-party deps, no build step at the target.
-- **Empty, schema-ready `db/datasource.db`** so the tree works the
-  moment it's unzipped. `scripts/init_db.py` is a safe no-op if a
-  populated DB is already in place.
-- **Three-step AMQ import pipeline** (plan → resolve → add) that's
-  idempotent past the disambiguation step.
-- **Spaced-repetition learning** across 20 levels: wait between
-  reviews grows from 1 day at level 0 to 574 days at level 19, with
-  graduation at the top.
-- **Soft-delete everywhere** plus a dry-run `cleanup.py` for hard
-  deletes older than a cutoff.
-- **HTML review sessions** rendered to `output/review_<EPOCH>.html`
-  with every due song, escaped against injection.
-
-## Install
+### Install
 
 1. Download `jankenoboe-lite-<YYYYMMDD>.zip` from the assets below.
 2. Unzip into a fresh directory (becomes your `App_Root`).
 3. Hand the tree to your AI agent.
 
-No `pip install`, no venv, no build step on the target.
+No `pip install`, no venv, no build step on the target. Runtime is
+Python 3.10+ stdlib only.
 
-## Use it
+### Use it
 
 You don't run the scripts by hand. Ask the agent in plain English:
 
@@ -55,9 +56,9 @@ You don't run the scripts by hand. Ask the agent in plain English:
 See `README.md` and `skills/README.md` inside the zip for the full
 map.
 
-## Verified on this build
+### Verified on this build
 
 - `ruff check` + `ruff format --check` clean
 - `mypy` clean
-- Test suite passes with ≥90% line coverage across `scripts/`
+- 469 tests passing with 95% line coverage across `scripts/`
   (enforced by `tests/coverage_runner.py`)

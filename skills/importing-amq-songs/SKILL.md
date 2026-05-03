@@ -9,28 +9,47 @@ Use this skill when the user has an AMQ JSON file they want to fold into `db/dat
 
 ## Input shape
 
-The AMQ file is a flat JSON array. Each entry uses these fields; extras are ignored.
+`import_plan.py` accepts two JSON shapes, via four mutually-exclusive input flags.
+
+**Raw AMQ export shape** (recommended — the file AMQ itself produces). A JSON object with a top-level `songs` array; sibling game-metadata keys are dropped silently.
 
 ```json
 {
-  "artist_name": "...",
-  "song_name": "...",
-  "show_name": "...",
-  "vintage": "Spring 2024",
-  "media_url": "https://..."
+  "songs": [
+    {"songArtist": "...", "songName": "...",
+     "animeEnglishName": "...", "animeRomajiName": "...",
+     "vintage": "Spring 2024", "audio": "https://..."}
+  ],
+  "quizSettings": {}
 }
 ```
 
-**One AMQ JSON file per run.** `import_plan.py --input` takes a single path, not a list or a glob. If the user hands you multiple AMQ dumps, run the full three-step pipeline once per file (or merge the arrays into one JSON file first). Same goes for `import_resolve.py --plan` and `add_play_history.py --input` — each accepts exactly one file at a time.
+**Flat shape** (legacy). A JSON array of five-field objects; extras are ignored.
+
+```json
+[
+  {"artist_name": "...", "song_name": "...", "show_name": "...",
+   "vintage": "Spring 2024", "media_url": "https://..."}
+]
+```
+
+See `references/plan-shape.md` for the AMQ → flat field mapping.
+
+**One AMQ JSON file per run.** The input flags take a single path or a single JSON string, not a list or a glob. If the user hands you multiple AMQ dumps, run the full three-step pipeline once per file (or merge the arrays into one JSON first). Same goes for `import_resolve.py --plan` and `add_play_history.py --input` — each accepts exactly one file at a time.
 
 ## Checklist
 
 1. **Initialize the database.** Run `python scripts/init_db.py`. Creates `db/datasource.db` on first use; safe no-op afterwards.
 
-2. **Step 1 — plan.** Run `scripts/import_plan.py --input amq.json --output plan.json`. Read-only. The summary on stdout has `resolved_count`, `auto_completable_count`, `ambiguous_count`, and `path`.
-   - `resolved` — the song already exists. Nothing to confirm.
-   - `auto_completable` — the artist is unambiguous (one match, or none → create). Nothing to confirm.
-   - `ambiguous` — two or more live artists share the `artist_name`. The user MUST pick one per entry.
+2. **Step 1 — plan.** Run `scripts/import_plan.py --input-jsonpath amq.json --output plan.json`. Read-only. The summary on stdout has `resolved_count`, `auto_completable_count`, `ambiguous_count`, and `path`.
+   - `--input-jsonpath PATH` — recommended for files. Accepts both the raw AMQ export and the flat array.
+   - `--input-jsonstr '<json>'` — inline JSON string, same two shapes. Useful for piped `jq` output.
+   - `--input-array '<json>'` — inline flat-only channel for programmatic callers; rejects raw AMQ on purpose.
+   - `--input PATH` (and the positional path) — legacy flat-only surface, kept for compatibility with existing scripts.
+   - Buckets returned in `plan.json`:
+     - `resolved` — the song already exists. Nothing to confirm.
+     - `auto_completable` — the artist is unambiguous (one match, or none → create). Nothing to confirm.
+     - `ambiguous` — two or more live artists share the `artist_name`. The user MUST pick one per entry.
 
 3. **Review the ambiguous bucket with the user.** Open `plan.json` and look at each entry's `candidates` (list of `{id, name, name_context}`). For each one, ask the user which artist it should be.
 
