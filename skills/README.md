@@ -2,6 +2,12 @@
 
 This library tracks and reviews anime songs. An AI agent drives it through six skills covering three kinds of work: **querying** the library (search, duplicates, detail views), **memorising** songs via spaced-repetition review sessions, and **managing data** (AMQ imports, artist merges, cleanup). A user's request maps to one or two skills below — pick by user intent, then follow the link to that skill's `SKILL.md` body for the exact steps.
 
+## If a script fails, report it — don't patch it
+
+**The `scripts/` tree is the shipped runtime. Do not edit it in response to an error, crash, or unexpected output.** When a script throws an exception, emits an `INVALID_INPUT` / `INTERNAL_ERROR` envelope, or returns something that doesn't look right, tell the user what happened — include the error code, the full error message, and the input you passed — and stop there. The user decides what to do next: retry with different input, file a bug, ship a fix.
+
+Editing `scripts/` from inside a user task hides the problem, couples the fix to that one session, and can silently violate invariants the rest of the scripts depend on. The runtime is stdlib-only and versioned; it changes through the release pipeline, not through session-level patches.
+
 ## Using Dedicated Commands
 
 When a dedicated command exists for what you want to do, use it. `data.py` CRUD (`create`, `update`, `delete`, `bulk-reassign`) is a last-resort fallback for tasks no dedicated command covers.

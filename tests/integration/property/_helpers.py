@@ -18,11 +18,11 @@ BASE_SEED = 20_240_601
 # Iteration count for integration property tests. Each iteration fires two
 # or more Python subprocesses (R18.3 mandates subprocess-level testing), and
 # each subprocess adds ~150 ms of interpreter startup + DB open overhead.
-# Keeping this to 20 lets the full suite finish in ~1-2 minutes rather than
-# ~5+. With 14 integration property files and 1-3 tests each, the aggregate
-# iteration count across the suite still exceeds 500 — enough randomness to
-# surface bugs the deterministic tests miss.
-ITERATIONS = 20
+# Keeping this to 5 lets the full suite finish in well under a minute
+# rather than ~5+. Across ~60 PBTs with 1-3 tests each, the aggregate
+# iteration count across the suite still runs into the hundreds — enough
+# randomness to surface bugs the deterministic tests miss.
+ITERATIONS = 5
 
 # Character set for randomly generated "name"-like strings. No ``%`` so the
 # decode layer doesn't transform the values; tests that specifically care

@@ -5,35 +5,35 @@
   list) is appended below whatever you write here.
 -->
 
-## jankenoboe-lite v0.1.1
+## jankenoboe-lite v0.1.2
 
-Four fixes on the importer, learning, and skills-documentation
-surfaces. Nothing to migrate — the legacy CLI calls and the on-disk
-schema are unchanged.
+One critical importer fix plus two small quality-of-life touches on
+the agent-facing docs. Nothing to migrate — the legacy CLI, on-disk
+schema, and existing scripted integrations are all unchanged.
 
 ### Highlights
 
-- **AMQ importer accepts the raw AMQ JSON directly.** Three new
-  mutually-exclusive flags on `scripts/import_plan.py` —
-  `--input-jsonpath PATH` (raw AMQ or flat array), `--input-jsonstr
-  JSON` (inline JSON, both shapes), `--input-array JSON` (inline
-  flat-only). The legacy `--input` / positional path keeps working
-  exactly as before.
-- **`learning.py graduate` now pins `level` to `MAX_LEVEL`.** The
-  same UPDATE that sets `graduated = 1` also sets `level = 19`, so a
-  song graduated via the explicit command ends in the same row state
-  as one graduated via `levelup` at the top of the spaced-repetition
-  curve.
-- **Skill docs gained a dedicated-command preference.**
-  `skills/README.md` now steers agents toward dedicated commands
-  (e.g. `learning.py graduate`) over raw `data.py` CRUD for work that
-  has a dedicated path, with the graduate invariant called out as
-  the worked counter-example.
-- **Combined-search examples in the search skill.**
-  `skills/searching-library/SKILL.md` gained a worked-examples
-  section covering the four combined-intent pairings (song+show,
-  song+artist, artist+show, all-three) mapped onto the existing
-  `query.py search-songs` flags.
+- **AMQ importer now accepts the real AMQ export.** v0.1.1's field
+  mapping was guessed from the design doc and didn't match the actual
+  file AMQ produces — every user hit `INVALID_INPUT missing_field=artist_name`
+  on the first real import. The preprocessor now walks the real nested
+  paths (`songInfo.artist`, `songInfo.songName`,
+  `songInfo.animeNames.english` / `songInfo.animeNames.romaji`,
+  `songInfo.vintage`, top-level `videoUrl`) instead of the guessed
+  flat keys. A committed copy of a real AMQ export drives an
+  end-to-end integration test so the mapping can't drift silently
+  again.
+- **Skill docs: "if a script fails, report it — don't patch it."**
+  `skills/README.md` gained a short top-of-file section telling
+  agents to surface script errors to the user — code, message, and
+  input — instead of editing the shipped `scripts/` tree from inside
+  a task. Fixes go through the release pipeline, not through session
+  patches.
+- **Faster property-based test runs.** The PBT iteration count
+  dropped from 20 to 5, cutting the full test-suite wall time from
+  ~5.8 min to ~2.8 min. Aggregate randomness across the ~60
+  property-based tests is still plenty for catching regressions; the
+  bigger win is that `make check` stops being a coffee break.
 
 ### Install
 
@@ -60,5 +60,5 @@ map.
 
 - `ruff check` + `ruff format --check` clean
 - `mypy` clean
-- 469 tests passing with 95% line coverage across `scripts/`
+- 475 tests passing with 95% line coverage across `scripts/`
   (enforced by `tests/coverage_runner.py`)

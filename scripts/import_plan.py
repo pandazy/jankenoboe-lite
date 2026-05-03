@@ -155,14 +155,46 @@ def _load_entries(path: str) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-# Field mapping table for `_amq_entry_to_flat`. Ordered: AMQ keys first,
-# then flat-alias fallbacks. Design.md Decision 3 pins this mapping.
-_AMQ_FIELD_MAP: tuple[tuple[str, tuple[str, ...], bool], ...] = (
-    ("artist_name", ("songArtist", "artist_name"), True),
-    ("song_name", ("songName", "song_name"), True),
-    ("show_name", ("animeEnglishName", "animeRomajiName", "show_name"), True),
-    ("vintage", ("vintage", "animeVintage"), True),
-    ("media_url", ("audio", "media_url", "MP3", "mp3"), False),
+def _get_nested(obj: object, path: tuple[str, ...]) -> object:
+    """Walk ``obj`` along ``path`` one key at a time. Return ``None``
+    on any missing container or non-dict container mid-walk. Returns
+    the final value regardless of type — caller decides what counts
+    as "present".
+    """
+    cur: object = obj
+    for key in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(key)
+        if cur is None:
+            return None
+    return cur
+
+
+# Field mapping table for `_amq_entry_to_flat`. Each candidate is a
+# **path tuple** walked one step at a time by `_get_nested`. Real
+# AMQ nested paths come first so they win on real AMQ payloads; the
+# flat aliases are retained as single-key paths so already-flat
+# callers (e.g. tests that pass flat entries through the AMQ channel)
+# keep working. Design.md Decision 1 pins this mapping.
+_AMQ_FIELD_MAP: tuple[tuple[str, tuple[tuple[str, ...], ...], bool], ...] = (
+    ("artist_name", (("songInfo", "artist"), ("artist_name",)), True),
+    ("song_name", (("songInfo", "songName"), ("song_name",)), True),
+    (
+        "show_name",
+        (
+            ("songInfo", "animeNames", "english"),
+            ("songInfo", "animeNames", "romaji"),
+            ("show_name",),
+        ),
+        True,
+    ),
+    ("vintage", (("songInfo", "vintage"), ("animeVintage",), ("vintage",)), True),
+    (
+        "media_url",
+        (("videoUrl",), ("audio",), ("media_url",), ("MP3",), ("mp3",)),
+        False,
+    ),
 )
 
 
@@ -191,9 +223,10 @@ def _discriminate(parsed: object) -> str:
 def _amq_entry_to_flat(entry: dict, i: int) -> dict:
     """Convert one raw AMQ song object to the flat five-field shape.
 
-    For each required key, iterate the candidate raw keys in order and
-    pick the first whose value is a non-empty string. If no candidate
-    matches, raise ``KnownError(INVALID_INPUT)`` citing the index and the
+    For each required key, iterate the candidate raw **paths** in
+    order and pick the first whose value (after walking the path via
+    ``_get_nested``) is a non-empty string. If no candidate matches,
+    raise ``KnownError(INVALID_INPUT)`` citing the index and the
     missing flat key.
 
     ``media_url`` is optional: if no candidate matches, it defaults to
@@ -203,10 +236,10 @@ def _amq_entry_to_flat(entry: dict, i: int) -> dict:
     always has exactly the five flat keys in the declared order.
     """
     flat: dict[str, str] = {}
-    for flat_key, candidates, required in _AMQ_FIELD_MAP:
+    for flat_key, candidate_paths, required in _AMQ_FIELD_MAP:
         picked: str | None = None
-        for raw_key in candidates:
-            val = entry.get(raw_key)
+        for path in candidate_paths:
+            val = _get_nested(entry, path)
             if isinstance(val, str) and val != "":
                 picked = val
                 break

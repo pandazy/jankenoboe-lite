@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import pathlib
+import shutil
 import urllib.parse
 from typing import Any
 
@@ -587,17 +589,19 @@ def test_raw_amq_via_input_jsonpath_matches_flat_via_input(
     # Raw AMQ export shape: a JSON object with a top-level `songs` array of
     # AMQ song objects, plus an extra top-level sibling (`quizSettings`) to
     # prove that the preprocessing stage drops it. The per-song keys use
-    # AMQ's native names (songArtist, songName, animeEnglishName,
-    # animeRomajiName, vintage, audio).
+    # AMQ's native real-export nesting: every required field lives under
+    # `songInfo`, show names nest a further level under `songInfo.animeNames`,
+    # and the media URL is the top-level `videoUrl` on the song.
     amq_raw_payload = {
         "songs": [
             {
-                "songArtist": "Artist A",
-                "songName": "Song A",
-                "animeEnglishName": "Show A",
-                "animeRomajiName": "Shou A",
-                "vintage": "Fall 2024",
-                "audio": "http://x/a",
+                "songInfo": {
+                    "artist": "Artist A",
+                    "songName": "Song A",
+                    "animeNames": {"english": "Show A", "romaji": "Shou A"},
+                    "vintage": "Fall 2024",
+                },
+                "videoUrl": "http://x/a",
             }
         ],
         "quizSettings": {"gameMode": "Solo", "songCount": 1},
@@ -705,16 +709,18 @@ def test_input_jsonstr_raw_amq_matches_flat_via_input(
     # Raw AMQ payload as a Python string — passed literally as an argv
     # value to `--input-jsonstr`. Includes a top-level `quizSettings`
     # sibling to prove the preprocessing stage drops game metadata.
+    # Uses the real AMQ nested shape (songInfo / animeNames / videoUrl).
     amq_raw_jsonstr = json.dumps(
         {
             "songs": [
                 {
-                    "songArtist": "Artist A",
-                    "songName": "Song A",
-                    "animeEnglishName": "Show A",
-                    "animeRomajiName": "Shou A",
-                    "vintage": "Fall 2024",
-                    "audio": "http://x/a",
+                    "songInfo": {
+                        "artist": "Artist A",
+                        "songName": "Song A",
+                        "animeNames": {"english": "Show A", "romaji": "Shou A"},
+                        "vintage": "Fall 2024",
+                    },
+                    "videoUrl": "http://x/a",
                 }
             ],
             "quizSettings": {"gameMode": "Solo", "songCount": 1},
@@ -848,16 +854,21 @@ def test_input_array_rejects_raw_amq_with_invalid_input(
     pinned_now,
 ) -> None:
     # Raw AMQ payload as a string — the flat-only channel check should
-    # fire before the classifier runs, so no DB seed is needed.
+    # fire before the classifier runs, so no DB seed is needed. Uses
+    # the real AMQ nested shape (songInfo / animeNames / videoUrl) to
+    # prove `--input-array` rejects any nested AMQ object, not just the
+    # v0.1.1 guessed shape.
     amq_raw_jsonstr = json.dumps(
         {
             "songs": [
                 {
-                    "songArtist": "Artist A",
-                    "songName": "Song A",
-                    "animeEnglishName": "Show A",
-                    "vintage": "Fall 2024",
-                    "audio": "http://x/a",
+                    "songInfo": {
+                        "artist": "Artist A",
+                        "songName": "Song A",
+                        "animeNames": {"english": "Show A"},
+                        "vintage": "Fall 2024",
+                    },
+                    "videoUrl": "http://x/a",
                 }
             ],
             "quizSettings": {"gameMode": "Solo"},
@@ -876,3 +887,83 @@ def test_input_array_rejects_raw_amq_with_invalid_input(
     envelope = json.loads(err)
     assert envelope["error"]["code"] == "INVALID_INPUT"
     assert "flat-only" in envelope["error"]["message"]
+
+
+# ---------------------------------------------------------------------------
+# amq-real-export-shape-fix Task 1 — bug-condition exploration test
+#
+# MUST FAIL on unfixed v0.1.1 code (the failure is the evidence the bug
+# exists): the current `_AMQ_FIELD_MAP` does a 1-level `entry[key]` lookup
+# at the top of each song object, but the real AMQ export nests every
+# required field under `songInfo` (and show names a further level under
+# `songInfo.animeNames`). The artist lookup aborts on song 0 with exit 1
+# and
+#   {"error": {"code": "INVALID_INPUT",
+#              "details": {"missing_field": "artist_name", "index": 0, ...}}}
+# so the `rc == 0` assertion below is what fails on unfixed code.
+#
+# After Task 2 rewrites `_AMQ_FIELD_MAP` to path tuples and adds
+# `_get_nested`, this same test passes end-to-end (three buckets sum to
+# 9 and the Tia/Chotto Dekakete Kimasu/Wooser pinned song lands in the
+# plan). Do not modify `scripts/import_plan.py` from this task — the
+# fix lands in Task 2.
+#
+# Fixture is read-only per R3.11: `shutil.copyfile` (not move, not edit)
+# into `tmp_app_root` so `--input-jsonpath` can read it via a stable
+# relative path inside the temp App_Root.
+# ---------------------------------------------------------------------------
+
+
+def test_real_amq_export_file_ingests_end_to_end(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+) -> None:
+    # Zero rows seeded — every AMQ song in the fixture lands in
+    # `auto_completable` against an empty DB after the fix.
+    fixture_path = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "tests"
+        / "fixtures"
+        / "amq_song_export-small.json"
+    )
+    copied = tmp_app_root / "amq_real.json"
+    shutil.copyfile(fixture_path, copied)
+
+    plan_path = tmp_app_root / "plan.json"
+
+    rc, _out, err = pinned_call(
+        "import_plan.py",
+        "--input-jsonpath",
+        "amq_real.json",
+        "--output",
+        str(plan_path),
+        cwd=tmp_app_root,
+        now=pinned_now,
+    )
+
+    # Bug-condition exploration assertion: on unfixed code this fires
+    # because the preprocessor rejects the real nested shape with
+    # INVALID_INPUT missing_field=artist_name details.index=0.
+    assert rc == 0, err
+    assert err == "", err
+
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    total = len(plan["resolved"]) + len(plan["auto_completable"]) + len(plan["ambiguous"])
+    assert total == 9
+
+    # Pinned-song assertion per design Decision 4. DB is empty so the
+    # entry lands in `auto_completable` with `artist_to_create` and
+    # `show_to_create` populated from the real nested paths:
+    #   songInfo.artist         -> "Tia"
+    #   songInfo.songName       -> "Chotto Dekakete Kimasu"
+    #   songInfo.animeNames.english -> "Wooser's Hand-to-Mouth Life: Awakening Arc"
+    pinned = [
+        item
+        for item in plan["auto_completable"]
+        if item.get("artist_to_create", {}).get("name") == "Tia"
+        and item.get("song_name") == "Chotto Dekakete Kimasu"
+        and item.get("show_to_create", {}).get("name")
+        == "Wooser's Hand-to-Mouth Life: Awakening Arc"
+    ]
+    assert len(pinned) >= 1, plan

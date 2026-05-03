@@ -7,10 +7,10 @@ For a randomly generated flat payload mixing ``resolved`` /
   same plan whether the entries arrive via the legacy ``--input``
   (baseline), ``--input-jsonpath``, ``--input-jsonstr``, or
   ``--input-array`` channel. All four output files are byte-equal.
-  Additionally, wrapping the same entries into the raw AMQ export shape
-  (``{"songs": [...], "extra": ...}`` with AMQ field names
-  ``songArtist`` / ``songName`` / ``animeEnglishName`` / ``vintage`` /
-  ``audio``) and loading via ``--input-jsonpath`` (file) or
+  Additionally, wrapping the same entries into the real AMQ export
+  nested shape (``{"songs": [{"songInfo": {"artist", "songName",
+  "animeNames": {"english"}, "vintage"}, "videoUrl"}, ...],
+  "extra": ...}``) and loading via ``--input-jsonpath`` (file) or
   ``--input-jsonstr`` (inline) produces the same plan as the flat
   baseline.
 * **Property 2 (Preservation):** The legacy ``--input`` surface is
@@ -110,21 +110,25 @@ def _seed_and_build_flat(
 
 
 def _wrap_as_raw_amq(flat: list[dict]) -> dict:
-    """Re-express a flat payload in the raw AMQ export shape.
+    """Re-express a flat payload in the real AMQ export nested shape.
 
-    The importer's raw-AMQ preprocessor reads ``songArtist`` /
-    ``songName`` / ``animeEnglishName`` / ``vintage`` / ``audio`` and
-    ignores every other top-level sibling of ``songs``. Including an
-    ``extra`` sibling exercises that drop-on-the-floor behavior.
+    Real AMQ songs nest every required field under ``songInfo`` (with
+    show names one level further under ``songInfo.animeNames``) and
+    expose the media URL at the top-level ``videoUrl`` on the song.
+    The importer's raw-AMQ preprocessor walks those paths and ignores
+    every other top-level sibling of ``songs``; including an ``extra``
+    sibling exercises that drop-on-the-floor behavior.
     """
     return {
         "songs": [
             {
-                "songArtist": e["artist_name"],
-                "songName": e["song_name"],
-                "animeEnglishName": e["show_name"],
-                "vintage": e["vintage"],
-                "audio": e["media_url"],
+                "songInfo": {
+                    "artist": e["artist_name"],
+                    "songName": e["song_name"],
+                    "animeNames": {"english": e["show_name"]},
+                    "vintage": e["vintage"],
+                },
+                "videoUrl": e["media_url"],
             }
             for e in flat
         ],
