@@ -46,7 +46,13 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Generate the HTML review page for due songs.",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("song-review", help="Render App_Root/output/review_<EPOCH>.html.")
+    sr = sub.add_parser("song-review", help="Render App_Root/output/review_<EPOCH>.html.")
+    sr.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="Shift the 'now' comparison forward by N seconds (default 0).",
+    )
     return p
 
 
@@ -55,7 +61,7 @@ def _build_parser() -> argparse.ArgumentParser:
 # pulls review.py needs on top of that.
 # ---------------------------------------------------------------------------
 
-_DUE_SQL = """
+_DUE_SQL = f"""
 SELECT
     l.id                   AS learning_id,
     l.song_id              AS song_id,
@@ -75,20 +81,7 @@ JOIN artist a ON a.id = s.artist_id
 WHERE s.status = 0
   AND a.status = 0
   AND l.graduated = 0
-  AND (
-      (l.last_level_up_at > 0 AND l.level = 0
-       AND CAST(strftime('%s', 'now') AS INTEGER)
-           >= (l.last_level_up_at + 300))
-      OR
-      (l.last_level_up_at = 0 AND l.level = 0
-       AND CAST(strftime('%s', 'now') AS INTEGER)
-           >= (l.updated_at + 300))
-      OR
-      (l.level > 0
-       AND (json_extract(l.level_up_path, '$[' || l.level || ']') * 86400
-            + l.last_level_up_at)
-           <= CAST(strftime('%s', 'now') AS INTEGER))
-  )
+  AND {_common.DUE_TIME_CONDITION_SQL}
 ORDER BY l.level DESC, l.id ASC
 """
 
@@ -147,16 +140,21 @@ def _media_urls_from_play_history(
 # ---------------------------------------------------------------------------
 
 
-def _build_payload(conn: sqlite3.Connection) -> dict[str, Any]:
+def _build_payload(conn: sqlite3.Connection, offset: int) -> dict[str, Any]:
     """Build the Due_Data_Payload dict per the design schema.
 
     Every field named in design.md "Due_Data_Payload schema (exact)"
     is populated here. Nullable fields flow through as Python ``None``
     so ``json.dumps`` emits JSON ``null``; the existing SQL already
     sorts and dedupes media_urls.
+
+    ``offset`` shifts the Due_SQL_Condition's "now" by N seconds,
+    matching ``learning.py due --offset N``. The offset is NOT added
+    to ``generated_at`` or the output filename — those record when the
+    file was written, not the logical "as of" time.
     """
     due_songs: list[dict[str, Any]] = []
-    for row in conn.execute(_DUE_SQL).fetchall():
+    for row in conn.execute(_DUE_SQL, {"offset": offset}).fetchall():
         due_songs.append(
             {
                 "learning_id": row["learning_id"],
@@ -221,9 +219,9 @@ def _render_page(payload: dict[str, Any], template_bytes: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 
 
-def _cmd_song_review(conn: sqlite3.Connection, _args: argparse.Namespace) -> None:
+def _cmd_song_review(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
     """Build payload, render page, write file, emit Success_Envelope."""
-    payload = _build_payload(conn)
+    payload = _build_payload(conn, int(args.offset))
     try:
         template_bytes = _TEMPLATE_PATH.read_bytes()
     except FileNotFoundError as exc:
@@ -241,7 +239,13 @@ def _cmd_song_review(conn: sqlite3.Connection, _args: argparse.Namespace) -> Non
     target = output_dir / f"review_{_common.now_epoch()}.html"
     target.write_bytes(rendered)
 
-    _common.success({"path": str(target), "due_count": payload["due_count"]})
+    _common.success(
+        {
+            "path": str(target),
+            "due_count": payload["due_count"],
+            "offset": int(args.offset),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
