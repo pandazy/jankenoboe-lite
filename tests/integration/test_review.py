@@ -26,6 +26,8 @@ import sqlite3
 from html.parser import HTMLParser
 from typing import Any
 
+from scripts.review import _minify_chrome
+
 # ---------------------------------------------------------------------------
 # Helpers: data-block parse, script-tag enumeration, break-the-symlink setup.
 # ---------------------------------------------------------------------------
@@ -754,3 +756,166 @@ def test_template_ships_youtube_search_link_machinery() -> None:
         "`aria-label` and `Search YouTube` must appear within 500 bytes "
         "of each other (proves the helper that sets the label still exists)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Inline_Mode (--inline) — the rendered HTML rides in the envelope
+# ---------------------------------------------------------------------------
+
+
+def test_song_review_inline_envelope_shape(
+    tmp_app_root,
+    call_script,
+    insert_artist,
+    insert_song,
+    insert_show,
+    insert_rel,
+    insert_play_history,
+    insert_learning,
+) -> None:
+    """``--inline`` returns ``{html, due_count, offset}`` with no ``path``.
+
+    The ``html`` field contains the rendered Review_Page; HTML-parsing it
+    yields the same data block and the same per-song count Disk_Mode
+    would have produced.
+    """
+    aid = insert_artist(tmp_app_root, name="Yui")
+    sid = insert_song(tmp_app_root, name="Again", artist_id=aid)
+    shid = insert_show(tmp_app_root, name="FMA: Brotherhood")
+    insert_rel(tmp_app_root, show_id=shid, song_id=sid, media_url="http://rel/u")
+    insert_play_history(tmp_app_root, show_id=shid, song_id=sid, media_url="http://ph/a")
+    sqlite_now = _sqlite_now(tmp_app_root / "db" / "datasource.db")
+    insert_learning(
+        tmp_app_root,
+        song_id=sid,
+        level=0,
+        last_level_up_at=sqlite_now - 400,
+        updated_at=sqlite_now - 400,
+    )
+
+    rc, out, err = call_script("review.py", "song-review", "--inline", cwd=tmp_app_root)
+    assert rc == 0, err
+    envelope = json.loads(out)
+    assert set(envelope.keys()) == {"html", "due_count", "offset"}
+    assert "path" not in envelope
+    assert envelope["due_count"] == 1
+    assert envelope["offset"] == 0
+
+    payload = _load_data_block(envelope["html"])
+    assert payload["due_count"] == 1
+    assert len(payload["due_songs"]) == 1
+    assert payload["due_songs"][0]["song_name"] == "Again"
+    # Exactly one ``<script id="due-data">`` block survived the minify pass.
+    scripts = _parse_scripts(envelope["html"])
+    data_blocks = [a for a, _t in scripts if a.get("id") == "due-data"]
+    assert len(data_blocks) == 1
+
+
+def test_song_review_inline_empty_state(tmp_app_root, call_script) -> None:
+    """``--inline`` against an empty queue still emits the inline envelope.
+
+    Empty state — no ``path``, ``due_count`` is 0, ``html`` carries the
+    same empty-state markup the disk file would have carried.
+    """
+    rc, out, err = call_script("review.py", "song-review", "--inline", cwd=tmp_app_root)
+    assert rc == 0, err
+    envelope = json.loads(out)
+    assert set(envelope.keys()) == {"html", "due_count", "offset"}
+    assert envelope["due_count"] == 0
+    assert envelope["offset"] == 0
+    # The same empty-state contract test_no_due_rows_still_writes_valid_html
+    # asserts on the disk path.
+    assert "<!DOCTYPE html>" in envelope["html"]
+    assert "No songs due." in envelope["html"]
+    payload = _load_data_block(envelope["html"])
+    assert payload["due_count"] == 0
+    assert payload["due_songs"] == []
+
+
+def test_song_review_inline_writes_no_file(tmp_app_root, call_script) -> None:
+    """``--inline`` skips the file write entirely.
+
+    ``App_Root/output/`` MUST NOT be created or populated by the run —
+    directory creation lives only inside the Disk_Mode branch.
+    """
+    output_dir = tmp_app_root / "output"
+    assert not output_dir.exists()
+
+    rc, _out, err = call_script("review.py", "song-review", "--inline", cwd=tmp_app_root)
+    assert rc == 0, err
+
+    assert not output_dir.exists() or list(output_dir.iterdir()) == []
+
+
+def test_minify_chrome_skips_script_and_style_and_is_idempotent() -> None:
+    """``_minify_chrome`` rewrites only chrome and is idempotent.
+
+    Direct unit test of the helper. Asserts five sub-properties:
+    script bodies survive byte-identically, style bodies survive
+    byte-identically, inter-tag whitespace in chrome is dropped,
+    HTML comments in chrome are stripped, and a second pass over
+    the output is a no-op.
+    """
+    sample = (
+        b"<html>  <head>\n  <style>\n  body { color: red; }\n  </style>\n  "
+        b"</head><body>  <!-- a comment -->  <p>hi</p>  "
+        b'<script id="due-data" type="application/json">'
+        b'{"a":\n  1, \n "b":\n  2}'
+        b"</script>  </body></html>"
+    )
+    out = _minify_chrome(sample)
+
+    # 1. Script body byte-identical (whitespace and all).
+    assert b'{"a":\n  1, \n "b":\n  2}' in out
+    # 2. Style body byte-identical.
+    assert b"\n  body { color: red; }\n  " in out
+    # 3. Inter-tag whitespace in chrome was collapsed to nothing.
+    assert b">  <" not in out
+    assert b"> <" not in out
+    # 4. HTML comment was stripped from chrome.
+    assert b"<!--" not in out
+    assert b"a comment" not in out
+    # 5. Idempotence — a second pass is a no-op.
+    assert _minify_chrome(out) == out
+
+
+def test_song_review_inline_preserves_escape_gate(
+    tmp_app_root,
+    call_script,
+    insert_artist,
+    insert_song,
+    insert_learning,
+) -> None:
+    """``--inline`` preserves Escape_Gate under hostile song names.
+
+    A ``</script><script>alert(1)</script>`` song name MUST round-trip
+    byte-for-byte through the inline payload, and the parsed
+    ``envelope["html"]`` MUST contain exactly two ``<script>`` elements
+    — the data block and the Inline_Script — never three.
+    """
+    aid = insert_artist(tmp_app_root, name="A")
+    hostile = "</script><script>alert(1)</script>"
+    sid = insert_song(tmp_app_root, name=hostile, artist_id=aid)
+    sqlite_now = _sqlite_now(tmp_app_root / "db" / "datasource.db")
+    insert_learning(
+        tmp_app_root,
+        song_id=sid,
+        level=0,
+        last_level_up_at=sqlite_now - 10_000,
+        updated_at=sqlite_now - 10_000,
+    )
+
+    rc, out, err = call_script("review.py", "song-review", "--inline", cwd=tmp_app_root)
+    assert rc == 0, err
+    envelope = json.loads(out)
+    html_text = envelope["html"]
+
+    # The literal hostile end-tag MUST NOT appear verbatim — that would
+    # break out of the data block and mint a third <script> element.
+    assert "</script><script>alert(1)</script>" not in html_text
+
+    scripts = _parse_scripts(html_text)
+    assert len(scripts) == 2
+
+    payload = _load_data_block(html_text)
+    assert payload["due_songs"][0]["song_name"] == hostile
