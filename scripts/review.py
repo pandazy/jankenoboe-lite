@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 import sqlite3
 import sys
 from typing import Any
@@ -52,6 +53,15 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help="Shift the 'now' comparison forward by N seconds (default 0).",
+    )
+    sr.add_argument(
+        "--inline",
+        action="store_true",
+        help=(
+            "Return the rendered HTML in the envelope's 'html' field "
+            "instead of writing it to disk; skips the file write "
+            "entirely and minifies the response."
+        ),
     )
     return p
 
@@ -192,6 +202,68 @@ def _escape_json_for_html(text: str) -> str:
     return text.replace("&", r"\u0026").replace("<", r"\u003c").replace(">", r"\u003e")
 
 
+# ``<script>`` and ``<style>`` bodies pass through ``_minify_chrome`` byte-
+# identically. The ``(?is)`` flags handle uppercase tag names defensively and
+# let ``.*?`` cross newlines in multi-line script bodies. ``[^>]*`` consumes
+# attributes on the start tag (e.g. ``<script id="due-data" type="...">``).
+_PASSTHROUGH_RE = re.compile(rb"(?is)(<(?:script|style)\b[^>]*>.*?</(?:script|style)\s*>)")
+_HTML_COMMENT_RE = re.compile(rb"<!--.*?-->", re.DOTALL)
+_WHITESPACE_RUN_RE = re.compile(rb"[ \t\n\r\f]{2,}")
+_INTER_TAG_WS_RE = re.compile(rb">[ \t\n\r\f]+<")
+
+
+def _minify_chrome(html_bytes: bytes) -> bytes:
+    """Minify HTML chrome — collapse inter-tag whitespace and strip
+    HTML comments — without touching ``<script>`` or ``<style>`` bodies.
+
+    The pass operates on the byte ranges that sit OUTSIDE
+    ``<script>...</script>`` and ``<style>...</style>`` elements; bytes
+    inside those two element types pass through byte-identically. This
+    is the contract relied on by the Escape_Gate property test: the
+    ``<script id="due-data">`` payload block survives untouched, so the
+    "two ``<script>`` elements" and "payload round-trips byte-for-byte"
+    oracles hold transitively.
+
+    The pass is idempotent for inputs whose chrome regions are already
+    minified.
+
+    Examples:
+        >>> _minify_chrome(b"<html>  <body>  <p>hi</p>  </body></html>")
+        b'<html><body><p>hi</p></body></html>'
+        >>> _minify_chrome(b"<html><!-- a comment --><body></body></html>")
+        b'<html><body></body></html>'
+        >>> _minify_chrome(b"<html><script>  var x = 1;  </script></html>")
+        b'<html><script>  var x = 1;  </script></html>'
+    """
+    parts = _PASSTHROUGH_RE.split(html_bytes)
+    # ``re.split`` with a capturing group yields alternating non-match /
+    # match segments: even indices are chrome, odd indices are passthrough.
+    out: list[bytes] = []
+    last = len(parts) - 1
+    for i, seg in enumerate(parts):
+        if i % 2 == 1:
+            out.append(seg)  # passthrough — byte-identical
+            continue
+        # Chrome region. Order matters: comments first (they can contain
+        # ``>`` / ``<`` that would fool the inter-tag pass), then collapse
+        # whitespace runs, then drop the single inter-tag space the previous
+        # pass left behind.
+        chrome = _HTML_COMMENT_RE.sub(b"", seg)
+        chrome = _WHITESPACE_RUN_RE.sub(b" ", chrome)
+        chrome = _INTER_TAG_WS_RE.sub(b"><", chrome)
+        # Boundary inter-tag stripping. A passthrough always opens with ``<``
+        # and closes with ``>``, so any whitespace touching that boundary on
+        # the chrome side is inter-tag whitespace that the in-segment pass
+        # could not see (because the ``>`` or ``<`` lives in the adjacent
+        # passthrough, not in this segment).
+        if i > 0:
+            chrome = chrome.lstrip(b" \t\n\r\f")
+        if i < last:
+            chrome = chrome.rstrip(b" \t\n\r\f")
+        out.append(chrome)
+    return b"".join(out)
+
+
 def _render_page(payload: dict[str, Any], template_bytes: bytes) -> bytes:
     """Substitute the payload into the template and return final bytes.
 
@@ -232,6 +304,17 @@ def _cmd_song_review(conn: sqlite3.Connection, args: argparse.Namespace) -> None
         ) from exc
 
     rendered = _render_page(payload, template_bytes)
+
+    if args.inline:
+        minified = _minify_chrome(rendered)
+        _common.success(
+            {
+                "html": minified.decode("utf-8"),
+                "due_count": payload["due_count"],
+                "offset": int(args.offset),
+            }
+        )
+        return
 
     app_root = _common.app_root(__file__)
     output_dir = app_root / "output"
