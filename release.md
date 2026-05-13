@@ -5,26 +5,44 @@
   list) is appended below whatever you write here.
 -->
 
-## jankenoboe-lite v0.1.5
+## jankenoboe-lite v0.1.6
 
-One additive CLI surface change to `review.py song-review`: a new
-opt-in `--inline` flag returns the rendered review page directly in
-the JSON envelope instead of writing it to disk. No schema change,
-no template change, no breaking change to the existing CLI surface
-or envelope shape.
+One additive CLI surface change to `learning.py`: a new `leveldown`
+subcommand drops one or more learning records back to a strictly-
+lower stored level when the user realises they forgot a song
+mid-review. No schema change, no breaking change to any existing
+subcommand.
 
 ### Highlights
 
-- **`song-review --inline` returns the rendered HTML in the
-  envelope.** With the flag, the Success_Envelope on stdout carries
-  the rendered review page directly under a new `html` field (key
-  set `{"html", "due_count", "offset"}`) and no file is written to
-  `App_Root/output/`. The HTML is minified — inter-tag whitespace
-  collapsed, HTML comments stripped — but `<script>` and `<style>`
-  bodies pass through byte-identically so the existing XSS-safety
-  contract on the embedded JSON payload is preserved unchanged. The
-  default (no-flag) behavior is byte-identical to v0.1.4 — same
-  file path scheme, same envelope `{"path", "due_count", "offset"}`.
+- **`learning.py leveldown --ids L1,L2,... --to-level N`** sets
+  `level = N`, resets `last_level_up_at` and `updated_at` to
+  `now_epoch`, and leaves `level_up_path`, `graduated`,
+  `created_at`, `id`, and `song_id` untouched. The next review of a
+  leveled-down record is scheduled `level_up_path[N]` days from the
+  forget event (not from the original level-up time). `--to-level`
+  must be in `[0, MAX_LEVEL]` and strictly below each record's
+  current level; the op is batch and all-or-nothing.
+- **Preflight mirrors `levelup`.** Range-checks `--to-level`
+  (`INVALID_INPUT` with `min`/`max` echo), then rejects in this
+  order: any missing id → `NOT_FOUND`, any graduated id →
+  `ALREADY_GRADUATED`, any row with `level <= --to-level` →
+  `INVALID_INPUT` carrying an `offenders` array `[{id, level,
+  display_level}, ...]`. The whole call runs in one
+  `BEGIN IMMEDIATE` transaction; any preflight failure rolls back
+  with no partial writes.
+- **Re-engaging a graduated song stays the job of `learning.py
+  batch`.** Per the existing R6.3 re-learn path, calling
+  `batch --song-ids <S>` on a song whose every learning row is
+  graduated inserts a fresh row at `RE_LEARN_LEVEL = 7` (display
+  8). `leveldown` deliberately does NOT un-graduate rows — the
+  per-cycle history stays clean.
+- **Skill-doc update for the agent.** `skills/reviewing-songs/
+  SKILL.md` now teaches the agent to call `leveldown` when the user
+  says they forgot a song, and to fall back to `batch --song-ids`
+  when `leveldown` returns `ALREADY_GRADUATED`. The skill
+  description trigger list grew to include "forgot" and "level
+  down".
 
 ### Install
 
@@ -51,5 +69,5 @@ map.
 
 - `ruff check` + `ruff format --check` clean
 - `mypy` clean
-- 486 tests passing with 95% line coverage across `scripts/`
+- 521 tests passing with 95% line coverage across `scripts/`
   (enforced by `tests/coverage_runner.py`)
