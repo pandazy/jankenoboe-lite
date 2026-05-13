@@ -32,7 +32,7 @@ from scripts import _common  # noqa: E402
 # argparse setup
 # ---------------------------------------------------------------------------
 
-_WRITE_CMDS = ("batch", "levelup", "graduate")
+_WRITE_CMDS = ("batch", "levelup", "graduate", "leveldown")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -50,6 +50,22 @@ def _build_parser() -> argparse.ArgumentParser:
 
     g = sub.add_parser("graduate", help="Mark one or more records as graduated.")
     g.add_argument("--ids", required=True, help="Comma-separated learning ids.")
+
+    ld = sub.add_parser(
+        "leveldown",
+        help="Drop level for one or more records (forget). Resets review clock.",
+    )
+    ld.add_argument("--ids", required=True, help="Comma-separated learning ids.")
+    ld.add_argument(
+        "--to-level",
+        dest="to_level",
+        type=int,
+        required=True,
+        help=(
+            f"Target stored level in [0, {_common.MAX_LEVEL}]; "
+            "must be strictly below each record's current level."
+        ),
+    )
 
     d = sub.add_parser("due", help="Records that are ready for review.")
     d.add_argument(
@@ -281,6 +297,97 @@ def _cmd_graduate(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# leveldown
+# ---------------------------------------------------------------------------
+
+
+def _cmd_leveldown(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
+    """Per R-LD-1..R-LD-4 (spec: learning-leveldown).
+
+    Range-checks ``--to-level`` first (R-LD-2.1 step 1.ii / R-LD-2.5),
+    then short-circuits on empty ``--ids``. Anything else still raises
+    INTERNAL_ERROR until tasks 4-5 land the preflight + writes.
+    """
+    target = int(args.to_level)
+    if target < 0 or target > _common.MAX_LEVEL:
+        raise _common.KnownError(
+            "INVALID_INPUT",
+            f"--to-level {target} out of range [0, {_common.MAX_LEVEL}]",
+            {"to_level": target, "min": 0, "max": _common.MAX_LEVEL},
+        )
+
+    ids = _csv(args.ids)
+    if not ids:
+        _common.success({"updated": []})
+        return
+
+    placeholders = ",".join(["?"] * len(ids))
+    rows = {
+        r["id"]: dict(r)
+        for r in conn.execute(
+            f"SELECT * FROM learning WHERE id IN ({placeholders})", ids
+        ).fetchall()
+    }
+
+    missing = [i for i in ids if i not in rows]
+    if missing:
+        raise _common.KnownError(
+            "NOT_FOUND",
+            f"{len(missing)} learning id(s) not found",
+            {"ids": missing},
+        )
+
+    graduated_ids = [i for i in ids if rows[i]["graduated"] == 1]
+    if graduated_ids:
+        raise _common.KnownError(
+            "ALREADY_GRADUATED",
+            f"{len(graduated_ids)} learning id(s) already graduated",
+            {"ids": graduated_ids},
+        )
+
+    offenders = [
+        {
+            "id": i,
+            "level": rows[i]["level"],
+            "display_level": rows[i]["level"] + 1,
+        }
+        for i in ids
+        if rows[i]["level"] <= target
+    ]
+    if offenders:
+        raise _common.KnownError(
+            "INVALID_INPUT",
+            (
+                f"to_level ({target}) must be strictly below each record's "
+                f"current level; {len(offenders)} id(s) failed"
+            ),
+            {"to_level": target, "offenders": offenders},
+        )
+
+    now = _common.now_epoch()
+    updated: list[dict[str, Any]] = []
+    for lid in ids:
+        prev = rows[lid]["level"]
+        conn.execute(
+            "UPDATE learning SET level = ?, last_level_up_at = ?, updated_at = ? WHERE id = ?",
+            (target, now, now, lid),
+        )
+        updated.append(
+            {
+                "id": lid,
+                "level": target,
+                "display_level": target + 1,
+                "graduated": 0,
+                "previous_level": prev,
+                "last_level_up_at": now,
+                "updated_at": now,
+            }
+        )
+
+    _common.success({"updated": updated})
+
+
+# ---------------------------------------------------------------------------
 # due
 # ---------------------------------------------------------------------------
 
@@ -344,6 +451,7 @@ _DISPATCH = {
     "batch": _cmd_batch,
     "levelup": _cmd_levelup,
     "graduate": _cmd_graduate,
+    "leveldown": _cmd_leveldown,
     "due": _cmd_due,
     "stats": _cmd_stats,
 }
