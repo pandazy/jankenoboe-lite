@@ -630,3 +630,66 @@ def test_empty_plan_emits_empty_envelope(
     assert envelope["songs_created"] == 0
     assert envelope["shows_created"] == 0
     assert envelope["unresolved_ambiguous"] == []
+
+
+# ---------------------------------------------------------------------------
+# amq-import-romaji-required Task 4 — resolve writes show.name_romaji.
+#
+# `_ensure_show` already reads `block.get("name_romaji")` and threads it
+# into `_common.insert_row`. Today (post import_plan.py fix) the upstream
+# block carries a real string instead of None. This test locks the column
+# write so a future regression that strips `name_romaji` from
+# `_common.SPECS["show"]` or flips `_resolve_show` back to None gets
+# caught at the resolve layer.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_persists_show_name_romaji_into_db(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+) -> None:
+    plan = {
+        "resolved": [],
+        "auto_completable": [
+            {
+                "artist_to_create": {"name": "Foo Artist"},
+                "song_name": "Foo Song",
+                "show_to_create": {
+                    "name": "Foo",
+                    "vintage": "Spring 2010",
+                    "s_type": None,
+                    "name_romaji": "Foo Romaji",
+                },
+                "media_url": "http://x/foo",
+            }
+        ],
+        "ambiguous": [],
+    }
+    plan_path = _write_plan(tmp_app_root, plan)
+    triples_path = tmp_app_root / "triples.json"
+
+    rc, envelope, err = _run_resolve(
+        pinned_call,
+        tmp_app_root,
+        pinned_now,
+        plan_path,
+        output_path=str(triples_path),
+    )
+    assert rc == 0, err
+    assert envelope["shows_created"] == 1
+
+    # Read the show row back and confirm name_romaji landed in the DB.
+    conn = sqlite3.connect(str(tmp_app_root / "db" / "datasource.db"))
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = list(
+            conn.execute(
+                "SELECT name, name_romaji FROM show WHERE name = ? AND vintage = ?",
+                ("Foo", "Spring 2010"),
+            )
+        )
+    finally:
+        conn.close()
+    assert len(rows) == 1
+    assert rows[0]["name_romaji"] == "Foo Romaji"

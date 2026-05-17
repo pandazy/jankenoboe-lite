@@ -5,44 +5,87 @@
   list) is appended below whatever you write here.
 -->
 
-## jankenoboe-lite v0.1.6
+## jankenoboe-lite v0.1.7
 
-One additive CLI surface change to `learning.py`: a new `leveldown`
-subcommand drops one or more learning records back to a strictly-
-lower stored level when the user realises they forgot a song
-mid-review. No schema change, no breaking change to any existing
-subcommand.
+Bugfix release: the AMQ importer now treats the show romaji as a
+required input and persists it into `show.name_romaji`. Before this
+fix, `_resolve_show` hard-coded `name_romaji = None` on every
+`show_to_create` block, so every newly-created show row landed with
+`name_romaji = NULL` regardless of whether the source AMQ file
+carried a romaji. The `show_name` column also conflated English and
+romaji on English-missing entries (the v0.1.2 mapping listed
+`animeNames.romaji` as a fallback under `show_name`). No new CLI
+flags, no new error codes, no schema migration —
+`show.name_romaji` already existed.
 
 ### Highlights
 
-- **`learning.py leveldown --ids L1,L2,... --to-level N`** sets
-  `level = N`, resets `last_level_up_at` and `updated_at` to
-  `now_epoch`, and leaves `level_up_path`, `graduated`,
-  `created_at`, `id`, and `song_id` untouched. The next review of a
-  leveled-down record is scheduled `level_up_path[N]` days from the
-  forget event (not from the original level-up time). `--to-level`
-  must be in `[0, MAX_LEVEL]` and strictly below each record's
-  current level; the op is batch and all-or-nothing.
-- **Preflight mirrors `levelup`.** Range-checks `--to-level`
-  (`INVALID_INPUT` with `min`/`max` echo), then rejects in this
-  order: any missing id → `NOT_FOUND`, any graduated id →
-  `ALREADY_GRADUATED`, any row with `level <= --to-level` →
-  `INVALID_INPUT` carrying an `offenders` array `[{id, level,
-  display_level}, ...]`. The whole call runs in one
-  `BEGIN IMMEDIATE` transaction; any preflight failure rolls back
-  with no partial writes.
-- **Re-engaging a graduated song stays the job of `learning.py
-  batch`.** Per the existing R6.3 re-learn path, calling
-  `batch --song-ids <S>` on a song whose every learning row is
-  graduated inserts a fresh row at `RE_LEARN_LEVEL = 7` (display
-  8). `leveldown` deliberately does NOT un-graduate rows — the
-  per-cycle history stays clean.
-- **Skill-doc update for the agent.** `skills/reviewing-songs/
-  SKILL.md` now teaches the agent to call `leveldown` when the user
-  says they forgot a song, and to fall back to `batch --song-ids`
-  when `leveldown` returns `ALREADY_GRADUATED`. The skill
-  description trigger list grew to include "forgot" and "level
-  down".
+- **Romaji is required.** `_AMQ_FIELD_MAP` grew a new
+  `show_name_romaji` row, marked required, fed by
+  `songInfo.animeNames.romaji` (with a flat alias for the legacy
+  shape). The `show_name` row dropped its romaji fallback —
+  `show_name` is English-only now; romaji is its own field. An
+  entry with English present and romaji missing is rejected with
+  `INVALID_INPUT` and exit code 1, naming `show_name_romaji` as
+  the missing field. The flat array shape on the legacy
+  `--input` / positional / `--input-array` channels grew the same
+  required key.
+- **Romaji is persisted.** `_resolve_show` now reads
+  `entry["show_name_romaji"]` and threads it onto every
+  `show_to_create` block as `name_romaji`. The downstream
+  `_ensure_show` in `import_resolve.py` was already wired to write
+  the column — that pipe was just being fed `None` until now. Every
+  newly-created show row carries a non-null `name_romaji` matching
+  its source entry.
+- **Discriminated rejection envelope.** The romaji rejection
+  carries `details.kind = "missing_romaji"` (in addition to the
+  existing `index`, `missing_field`, `available_keys`). The agent
+  skill keys on this discriminator to enter the new recovery
+  branch; every other `INVALID_INPUT` cause keeps its v0.1.6
+  envelope shape unchanged.
+- **Step 0 sniff in the agent skill.** `skills/importing-amq-songs/
+  SKILL.md` gained a new pre-flight step that runs **before**
+  `import_plan.py`. The agent walks each `songs[i]` looking for a
+  non-empty romaji at the canonical path; on miss it classifies
+  the failure mode against three named hypotheses (Shape drift,
+  Truncated/malformed, Genuinely-empty), surfaces the actual
+  observed keys, proposes a candidate recovery path, and asks the
+  user to confirm. Silent on the success path.
+- **Manual recovery via existing `data.py create`.** When the user
+  confirms a Step 0 diagnosis, the agent extracts the romaji from
+  the candidate path, inserts each affected show via
+  `scripts/data.py create --kind show '{"name": ..., "name_romaji":
+  ..., "vintage": ..., "s_type": null}'`, then re-runs the
+  three-step pipeline. The classifier's existence query
+  (`name = ? AND vintage = ?`) hits the freshly-created rows and
+  emits a `show_id` instead of a `show_to_create`. No new script,
+  no new flag — stays on existing rails.
+- **Documentation lockstep.** `skills/importing-amq-songs/
+  references/plan-shape.md` field-mapping table grew the
+  `show_name_romaji` row; `show_to_create` example shows
+  `name_romaji` as a non-null string; the English-falls-back-to-
+  romaji note is gone.
+
+### Behaviour preserved
+
+- `show.name_romaji` was already a real column in
+  `scripts/schema.sql` and `_common.EXPECTED_SCHEMA["show"]`. No
+  schema migration. `tests/fixtures/schema.sql` is byte-identical.
+- Rejection envelopes for every other missing required field
+  (`artist_name`, `song_name`, `show_name`, `vintage`) keep the
+  v0.1.6 shape — only the romaji rejection carries `details.kind`.
+- The classifier's existence query for shows still keys on
+  `(name, vintage, status = 0)` only. Re-running an import on the
+  same AMQ file is still idempotent.
+- The four input channels (`--input`, positional path,
+  `--input-jsonpath`, `--input-jsonstr`, `--input-array`) keep
+  their existing dispatch semantics. `--input-array` still
+  rejects nested AMQ shapes with `INVALID_INPUT`.
+- `scripts/import_resolve.py`, `scripts/_common.py`,
+  `scripts/schema.sql` are byte-identical to v0.1.6.
+- Every script outside the importer (`learning.py`, `query.py`,
+  `merge_artists.py`, `cleanup.py`, `add_play_history.py`,
+  `init_db.py`, `data.py`, `review.py`) is byte-identical.
 
 ### Install
 
@@ -69,5 +112,5 @@ map.
 
 - `ruff check` + `ruff format --check` clean
 - `mypy` clean
-- 521 tests passing with 95% line coverage across `scripts/`
+- 527 tests passing with 95% line coverage across `scripts/`
   (enforced by `tests/coverage_runner.py`)

@@ -93,6 +93,32 @@ def _build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
+def _require_flat_romaji(
+    normalised: dict[str, str],
+    i: int,
+    decoded: dict[str, Any],
+) -> None:
+    """Reject a flat entry whose ``show_name_romaji`` is missing or empty.
+
+    Mirrors the ``_amq_entry_to_flat`` rejection envelope so the
+    flat-array surfaces (legacy ``--input``, positional path,
+    ``--input-array``, and ``--input-jsonpath`` / ``--input-jsonstr``
+    on flat payloads) produce the same typed error the AMQ
+    preprocessor produces.
+    """
+    if normalised["show_name_romaji"] == "":
+        raise _common.KnownError(
+            "INVALID_INPUT",
+            f"AMQ song at index {i} is missing required field show_name_romaji.",
+            {
+                "index": i,
+                "missing_field": "show_name_romaji",
+                "kind": "missing_romaji",
+                "available_keys": sorted(decoded.keys()),
+            },
+        )
+
+
 def _load_entries(path: str) -> list[dict[str, Any]]:
     """Read and URL-decode every string field of every AMQ entry.
 
@@ -136,9 +162,11 @@ def _load_entries(path: str) -> list[dict[str, Any]]:
             "artist_name": str(decoded.get("artist_name", "")),
             "song_name": str(decoded.get("song_name", "")),
             "show_name": str(decoded.get("show_name", "")),
+            "show_name_romaji": str(decoded.get("show_name_romaji", "")),
             "vintage": str(decoded.get("vintage", "")),
             "media_url": str(decoded.get("media_url", "")),
         }
+        _require_flat_romaji(normalised, i, decoded)
         out.append(normalised)
     return out
 
@@ -184,8 +212,15 @@ _AMQ_FIELD_MAP: tuple[tuple[str, tuple[tuple[str, ...], ...], bool], ...] = (
         "show_name",
         (
             ("songInfo", "animeNames", "english"),
-            ("songInfo", "animeNames", "romaji"),
             ("show_name",),
+        ),
+        True,
+    ),
+    (
+        "show_name_romaji",
+        (
+            ("songInfo", "animeNames", "romaji"),
+            ("show_name_romaji",),
         ),
         True,
     ),
@@ -245,14 +280,19 @@ def _amq_entry_to_flat(entry: dict, i: int) -> dict:
                 break
         if picked is None:
             if required:
+                details: dict[str, Any] = {
+                    "index": i,
+                    "missing_field": flat_key,
+                    "available_keys": sorted(entry.keys()),
+                }
+                # Discriminator the agent's Step 0 sniff and recovery
+                # branch key on; only fires for the romaji rejection.
+                if flat_key == "show_name_romaji":
+                    details["kind"] = "missing_romaji"
                 raise _common.KnownError(
                     "INVALID_INPUT",
                     f"AMQ song at index {i} is missing required field {flat_key}.",
-                    {
-                        "index": i,
-                        "missing_field": flat_key,
-                        "available_keys": sorted(entry.keys()),
-                    },
+                    details,
                 )
             picked = ""
         flat[flat_key] = picked
@@ -322,9 +362,17 @@ def _entries_from_parsed(parsed: object, *, channel: str) -> list[dict[str, Any]
             "artist_name": str(decoded.get("artist_name", "")),
             "song_name": str(decoded.get("song_name", "")),
             "show_name": str(decoded.get("show_name", "")),
+            "show_name_romaji": str(decoded.get("show_name_romaji", "")),
             "vintage": str(decoded.get("vintage", "")),
             "media_url": str(decoded.get("media_url", "")),
         }
+        # `_flatten_amq` already enforces required fields (including
+        # `show_name_romaji`) on the AMQ-nested side via the
+        # `_AMQ_FIELD_MAP` table. The flat-array side runs through
+        # the same shape on this branch but skips the AMQ table —
+        # so the romaji guard is needed here when `tag == "flat"`.
+        if tag == "flat":
+            _require_flat_romaji(normalised, i, decoded)
         out.append(normalised)
     return out
 
@@ -350,7 +398,7 @@ def _resolve_show(conn: sqlite3.Connection, entry: dict[str, Any]) -> dict[str, 
             "name": entry["show_name"],
             "vintage": entry["vintage"],
             "s_type": None,
-            "name_romaji": None,
+            "name_romaji": entry["show_name_romaji"],
         },
         "media_url": entry["media_url"],
     }

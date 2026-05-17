@@ -16,7 +16,7 @@ These are the exact shapes of the three handoff files in the AMQ import pipeline
       "song_id": "<uuid>",
       "show_to_create": {
         "name": "Foo", "vintage": "Spring 2010",
-        "s_type": null, "name_romaji": null
+        "s_type": null, "name_romaji": "Foo Romaji"
       },
       "media_url": ""
     }
@@ -32,7 +32,7 @@ These are the exact shapes of the three handoff files in the AMQ import pipeline
       "artist_to_create": {"name": "New Artist"},
       "song_name": "Some Song",
       "show_to_create": {"name": "Bar", "vintage": "Fall 2015",
-                         "s_type": null, "name_romaji": null},
+                         "s_type": null, "name_romaji": "Baa"},
       "media_url": ""
     }
   ],
@@ -108,12 +108,13 @@ Object keyed by the stringified index of an ambiguous entry.
 
 Each AMQ song object is translated to the flat five-field shape via the mapping below. For each flat key the candidate raw paths are walked in order; the first non-empty string wins.
 
-| Raw AMQ path(s) tried, in order                                             | Flat key      | Required?                   |
-|-----------------------------------------------------------------------------|---------------|-----------------------------|
-| `songInfo.artist`, `artist_name`                                            | `artist_name` | yes                         |
-| `songInfo.songName`, `song_name`                                            | `song_name`   | yes                         |
-| `songInfo.animeNames.english`, `songInfo.animeNames.romaji`, `show_name`    | `show_name`   | yes (English beats Romaji)  |
-| `songInfo.vintage`, `animeVintage`, `vintage`                               | `vintage`     | yes                         |
-| `videoUrl`, `audio`, `media_url`, `MP3`, `mp3`                              | `media_url`   | no — defaults to `""`       |
+| Raw AMQ path(s) tried, in order                                             | Flat key            | Required?              |
+|-----------------------------------------------------------------------------|---------------------|------------------------|
+| `songInfo.artist`, `artist_name`                                            | `artist_name`       | yes                    |
+| `songInfo.songName`, `song_name`                                            | `song_name`         | yes                    |
+| `songInfo.animeNames.english`, `show_name`                                  | `show_name`         | yes (English-only)     |
+| `songInfo.animeNames.romaji`, `show_name_romaji`                            | `show_name_romaji`  | yes                    |
+| `songInfo.vintage`, `animeVintage`, `vintage`                               | `vintage`           | yes                    |
+| `videoUrl`, `audio`, `media_url`, `MP3`, `mp3`                              | `media_url`         | no — defaults to `""`  |
 
-A missing required field aborts the whole file with `INVALID_INPUT`, naming the index and the missing flat key. Extra AMQ-native fields per-song — `songNumber`, `correctGuess`, `videoLength`, `type`, `typeNumber`, `annId`, `fromList`, `startSample`, `composerInfo`, `arrangerInfo`, `altAnimeNames`, `altAnimeNamesRomaji`, and the like — are silently dropped, as are top-level siblings of `songs` (`roomName`, `startTime`, `quizSettings`, etc.). The flat-alias single-key paths (`artist_name`, `song_name`, `show_name`, `vintage`, `media_url`, plus `audio` / `MP3` / `mp3` / `animeVintage`) are retained as fallbacks so already-flat callers keep working.
+A missing required field aborts the whole file with `INVALID_INPUT`, naming the index and the missing flat key. The romaji rejection additionally carries `details.kind = "missing_romaji"` so the agent's Step 0 sniff and recovery branch can discriminate it from other `INVALID_INPUT` causes. English and romaji are independent fields — there is no fallback from one to the other; both are required and both land in their own DB columns (`show.name` and `show.name_romaji`). Extra AMQ-native fields per-song — `songNumber`, `correctGuess`, `videoLength`, `type`, `typeNumber`, `annId`, `fromList`, `startSample`, `composerInfo`, `arrangerInfo`, `altAnimeNames`, `altAnimeNamesRomaji`, and the like — are silently dropped, as are top-level siblings of `songs` (`roomName`, `startTime`, `quizSettings`, etc.). The flat-alias single-key paths (`artist_name`, `song_name`, `show_name`, `vintage`, `media_url`, plus `audio` / `MP3` / `mp3` / `animeVintage`) are retained as fallbacks so already-flat callers keep working.
