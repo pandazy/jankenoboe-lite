@@ -197,6 +197,7 @@ def test_import_resolve_rollback_on_invalid_answer(
                 "artist_name": "Shared",
                 "song_name": "Conflict Song",
                 "show_name": "Any Show",
+                "show_name_romaji": "Any Show (romaji)",
                 "vintage": "",
                 "media_url": "",
                 "candidates": [

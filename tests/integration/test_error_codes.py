@@ -238,6 +238,7 @@ def test_song_invariant_violation(
                     "artist_name": "A",
                     "song_name": "Dup",
                     "show_name": "",
+                    "show_name_romaji": "Dup Romaji",
                     "vintage": "",
                     "media_url": "",
                 }

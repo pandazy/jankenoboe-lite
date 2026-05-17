@@ -120,6 +120,7 @@ def test_amq_entry_to_flat_all_amq_keys_present():
         "artist_name": "Lia",
         "song_name": "Megumeru",
         "show_name": "Clannad",
+        "show_name_romaji": "Kuranado",
         "vintage": "Fall 2007",
         "media_url": "https://example.com/megumeru.mp3",
     }
@@ -130,6 +131,7 @@ def test_amq_entry_to_flat_all_flat_alias_keys_present():
         "artist_name": "Yui",
         "song_name": "Again",
         "show_name": "Fullmetal Alchemist: Brotherhood",
+        "show_name_romaji": "Hagane no Renkinjutsushi: Fullmetal Alchemist",
         "vintage": "Spring 2009",
         "media_url": "https://example.com/again.mp3",
     }
@@ -138,12 +140,16 @@ def test_amq_entry_to_flat_all_flat_alias_keys_present():
         "artist_name": "Yui",
         "song_name": "Again",
         "show_name": "Fullmetal Alchemist: Brotherhood",
+        "show_name_romaji": "Hagane no Renkinjutsushi: Fullmetal Alchemist",
         "vintage": "Spring 2009",
         "media_url": "https://example.com/again.mp3",
     }
 
 
-def test_amq_entry_to_flat_english_name_beats_romaji_when_both_present():
+def test_amq_entry_to_flat_english_and_romaji_land_in_separate_fields():
+    # The v0.1.6 English-falls-back-to-romaji precedence is gone.
+    # English populates `show_name`; romaji populates `show_name_romaji`
+    # — they're independent fields after the romaji-required fix.
     entry = {
         "songInfo": {
             "artist": "Lia",
@@ -155,9 +161,14 @@ def test_amq_entry_to_flat_english_name_beats_romaji_when_both_present():
     }
     got = m._amq_entry_to_flat(entry, 0)
     assert got["show_name"] == "Clannad"
+    assert got["show_name_romaji"] == "Kuranado"
 
 
-def test_amq_entry_to_flat_romaji_used_when_english_absent():
+def test_amq_entry_to_flat_missing_english_no_longer_falls_back_to_romaji():
+    # Before the romaji-required fix, an entry with romaji but no
+    # English silently used the romaji as `show_name`. After the fix
+    # the English fallback is gone — missing English is a hard
+    # rejection, no `kind` discriminator (that's romaji-only).
     entry = {
         "songInfo": {
             "artist": "Lia",
@@ -167,8 +178,62 @@ def test_amq_entry_to_flat_romaji_used_when_english_absent():
         },
         "videoUrl": "https://example.com/megumeru.mp3",
     }
+    with pytest.raises(_common.KnownError) as exc:
+        m._amq_entry_to_flat(entry, 0)
+    assert exc.value.code == "INVALID_INPUT"
+    assert exc.value.details["missing_field"] == "show_name"
+    assert "kind" not in exc.value.details
+
+
+def test_amq_entry_to_flat_show_name_romaji_present():
+    entry = {
+        "songInfo": {
+            "artist": "Lia",
+            "songName": "Megumeru",
+            "animeNames": {"english": "Clannad", "romaji": "Kuranado"},
+            "vintage": "Fall 2007",
+        },
+        "videoUrl": "https://example.com/megumeru.mp3",
+    }
     got = m._amq_entry_to_flat(entry, 0)
-    assert got["show_name"] == "Kuranado"
+    assert got["show_name_romaji"] == "Kuranado"
+
+
+def test_amq_entry_to_flat_missing_show_name_romaji_raises_with_kind_missing_romaji():
+    # Locks the discriminator the agent's Step 0 sniff and recovery
+    # branch key on. English present + romaji empty/missing fires
+    # the romaji rejection (not the English one).
+    entry = {
+        "songInfo": {
+            "artist": "Lia",
+            "songName": "Megumeru",
+            "animeNames": {"english": "Clannad", "romaji": ""},
+            "vintage": "Fall 2007",
+        },
+        "videoUrl": "https://example.com/megumeru.mp3",
+    }
+    with pytest.raises(_common.KnownError) as exc:
+        m._amq_entry_to_flat(entry, 3)
+    assert exc.value.code == "INVALID_INPUT"
+    assert exc.value.details["missing_field"] == "show_name_romaji"
+    assert exc.value.details["kind"] == "missing_romaji"
+    assert exc.value.details["index"] == 3
+
+
+def test_amq_entry_to_flat_show_name_romaji_flat_alias_works():
+    # Flat-alias single-key path on the new row keeps already-flat
+    # callers (the four-channel PBT, in-repo tests that pass
+    # flat-per-song through the AMQ channel) working.
+    entry = {
+        "artist_name": "Yui",
+        "song_name": "Again",
+        "show_name": "Fullmetal Alchemist: Brotherhood",
+        "show_name_romaji": "Hagane no Renkinjutsushi",
+        "vintage": "Spring 2009",
+        "media_url": "https://example.com/again.mp3",
+    }
+    got = m._amq_entry_to_flat(entry, 0)
+    assert got["show_name_romaji"] == "Hagane no Renkinjutsushi"
 
 
 def test_amq_entry_to_flat_missing_media_url_defaults_to_empty():
@@ -176,7 +241,7 @@ def test_amq_entry_to_flat_missing_media_url_defaults_to_empty():
         "songInfo": {
             "artist": "Lia",
             "songName": "Megumeru",
-            "animeNames": {"english": "Clannad"},
+            "animeNames": {"english": "Clannad", "romaji": "Kuranado"},
             "vintage": "Fall 2007",
         },
     }
@@ -189,7 +254,7 @@ def test_amq_entry_to_flat_empty_string_media_candidates_default_to_empty():
         "songInfo": {
             "artist": "Lia",
             "songName": "Megumeru",
-            "animeNames": {"english": "Clannad"},
+            "animeNames": {"english": "Clannad", "romaji": "Kuranado"},
             "vintage": "Fall 2007",
         },
         "videoUrl": "",
@@ -206,7 +271,7 @@ def test_amq_entry_to_flat_missing_artist_raises_invalid_input():
     entry = {
         "songInfo": {
             "songName": "Megumeru",
-            "animeNames": {"english": "Clannad"},
+            "animeNames": {"english": "Clannad", "romaji": "Kuranado"},
             "vintage": "Fall 2007",
         },
         "videoUrl": "https://example.com/megumeru.mp3",
@@ -226,7 +291,7 @@ def test_amq_entry_to_flat_empty_string_artist_counts_as_missing():
         "songInfo": {
             "artist": "",
             "songName": "Megumeru",
-            "animeNames": {"english": "Clannad"},
+            "animeNames": {"english": "Clannad", "romaji": "Kuranado"},
             "vintage": "Fall 2007",
         },
         "videoUrl": "https://example.com/megumeru.mp3",
@@ -242,7 +307,7 @@ def test_amq_entry_to_flat_missing_song_name_raises():
     entry = {
         "songInfo": {
             "artist": "Lia",
-            "animeNames": {"english": "Clannad"},
+            "animeNames": {"english": "Clannad", "romaji": "Kuranado"},
             "vintage": "Fall 2007",
         },
     }
@@ -254,10 +319,14 @@ def test_amq_entry_to_flat_missing_song_name_raises():
 
 
 def test_amq_entry_to_flat_missing_show_name_raises():
+    # Carry romaji on the entry so the show-name rejection fires
+    # before the romaji rejection (declaration order in
+    # `_AMQ_FIELD_MAP` is artist → song → show → romaji → vintage).
     entry = {
         "songInfo": {
             "artist": "Lia",
             "songName": "Megumeru",
+            "animeNames": {"romaji": "Kuranado"},
             "vintage": "Fall 2007",
         },
     }
@@ -273,7 +342,7 @@ def test_amq_entry_to_flat_missing_vintage_raises():
         "songInfo": {
             "artist": "Lia",
             "songName": "Megumeru",
-            "animeNames": {"english": "Clannad"},
+            "animeNames": {"english": "Clannad", "romaji": "Kuranado"},
         },
     }
     with pytest.raises(_common.KnownError) as exc:
@@ -287,7 +356,7 @@ def test_amq_entry_to_flat_drops_extra_amq_native_fields():
         "songInfo": {
             "artist": "Lia",
             "songName": "Megumeru",
-            "animeNames": {"english": "Clannad"},
+            "animeNames": {"english": "Clannad", "romaji": "Kuranado"},
             "vintage": "Fall 2007",
             # Extra nested game-state noise on songInfo itself.
             "composerInfo": {"id": 1, "names": []},
@@ -307,6 +376,7 @@ def test_amq_entry_to_flat_drops_extra_amq_native_fields():
         "artist_name",
         "song_name",
         "show_name",
+        "show_name_romaji",
         "vintage",
         "media_url",
     }
@@ -317,7 +387,7 @@ def test_amq_entry_to_flat_key_order_is_stable():
         "songInfo": {
             "artist": "Lia",
             "songName": "Megumeru",
-            "animeNames": {"english": "Clannad"},
+            "animeNames": {"english": "Clannad", "romaji": "Kuranado"},
             "vintage": "Fall 2007",
         },
         "videoUrl": "https://example.com/megumeru.mp3",
@@ -327,6 +397,7 @@ def test_amq_entry_to_flat_key_order_is_stable():
         "artist_name",
         "song_name",
         "show_name",
+        "show_name_romaji",
         "vintage",
         "media_url",
     ]
@@ -344,7 +415,7 @@ def test_flatten_amq_three_song_happy_path():
                 "songInfo": {
                     "artist": "Lia",
                     "songName": "Megumeru",
-                    "animeNames": {"english": "Clannad"},
+                    "animeNames": {"english": "Clannad", "romaji": "Kuranado"},
                     "vintage": "Fall 2007",
                 },
                 "videoUrl": "https://example.com/megumeru.mp3",
@@ -353,7 +424,10 @@ def test_flatten_amq_three_song_happy_path():
                 "songInfo": {
                     "artist": "Yui",
                     "songName": "Again",
-                    "animeNames": {"english": "Fullmetal Alchemist: Brotherhood"},
+                    "animeNames": {
+                        "english": "Fullmetal Alchemist: Brotherhood",
+                        "romaji": "Hagane no Renkinjutsushi",
+                    },
                     "vintage": "Spring 2009",
                 },
                 "videoUrl": "https://example.com/again.mp3",
@@ -362,7 +436,7 @@ def test_flatten_amq_three_song_happy_path():
                 "songInfo": {
                     "artist": "FLOW",
                     "songName": "GO!!!",
-                    "animeNames": {"english": "Naruto"},
+                    "animeNames": {"english": "Naruto", "romaji": "Naruto"},
                     "vintage": "Fall 2002",
                 },
                 "videoUrl": "https://example.com/go.mp3",
@@ -379,6 +453,7 @@ def test_flatten_amq_three_song_happy_path():
             "artist_name": "Lia",
             "song_name": "Megumeru",
             "show_name": "Clannad",
+            "show_name_romaji": "Kuranado",
             "vintage": "Fall 2007",
             "media_url": "https://example.com/megumeru.mp3",
         },
@@ -386,6 +461,7 @@ def test_flatten_amq_three_song_happy_path():
             "artist_name": "Yui",
             "song_name": "Again",
             "show_name": "Fullmetal Alchemist: Brotherhood",
+            "show_name_romaji": "Hagane no Renkinjutsushi",
             "vintage": "Spring 2009",
             "media_url": "https://example.com/again.mp3",
         },
@@ -393,6 +469,7 @@ def test_flatten_amq_three_song_happy_path():
             "artist_name": "FLOW",
             "song_name": "GO!!!",
             "show_name": "Naruto",
+            "show_name_romaji": "Naruto",
             "vintage": "Fall 2002",
             "media_url": "https://example.com/go.mp3",
         },
@@ -406,7 +483,7 @@ def test_flatten_amq_non_dict_entry_raises_with_index():
                 "songInfo": {
                     "artist": "Lia",
                     "songName": "Megumeru",
-                    "animeNames": {"english": "Clannad"},
+                    "animeNames": {"english": "Clannad", "romaji": "Kuranado"},
                     "vintage": "Fall 2007",
                 },
                 "videoUrl": "https://example.com/megumeru.mp3",
@@ -416,7 +493,7 @@ def test_flatten_amq_non_dict_entry_raises_with_index():
                 "songInfo": {
                     "artist": "FLOW",
                     "songName": "GO!!!",
-                    "animeNames": {"english": "Naruto"},
+                    "animeNames": {"english": "Naruto", "romaji": "Naruto"},
                     "vintage": "Fall 2002",
                 },
                 "videoUrl": "https://example.com/go.mp3",
@@ -440,7 +517,7 @@ def test_flatten_amq_ignores_top_level_siblings():
                 "songInfo": {
                     "artist": "Lia",
                     "songName": "Megumeru",
-                    "animeNames": {"english": "Clannad"},
+                    "animeNames": {"english": "Clannad", "romaji": "Kuranado"},
                     "vintage": "Fall 2007",
                 },
                 "videoUrl": "https://example.com/megumeru.mp3",
@@ -459,6 +536,7 @@ def test_flatten_amq_ignores_top_level_siblings():
             "artist_name": "Lia",
             "song_name": "Megumeru",
             "show_name": "Clannad",
+            "show_name_romaji": "Kuranado",
             "vintage": "Fall 2007",
             "media_url": "https://example.com/megumeru.mp3",
         },

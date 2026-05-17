@@ -75,6 +75,7 @@ def test_full_amq_pipeline_with_idempotent_second_run(
             "artist_name": "Existing Artist",
             "song_name": "Existing Song",
             "show_name": "Existing Show",
+            "show_name_romaji": "Existing Show (romaji)",
             "vintage": "Spring 2024",
             "media_url": "http://x/resolved",
         },
@@ -83,6 +84,7 @@ def test_full_amq_pipeline_with_idempotent_second_run(
             "artist_name": "Existing Artist",
             "song_name": "Fresh Song",
             "show_name": "Existing Show",
+            "show_name_romaji": "Existing Show (romaji)",
             "vintage": "Spring 2024",
             "media_url": "http://x/auto-existing-artist",
         },
@@ -91,6 +93,7 @@ def test_full_amq_pipeline_with_idempotent_second_run(
             "artist_name": "Brand New",
             "song_name": "Brand New Song",
             "show_name": "Brand New Show",
+            "show_name_romaji": "Brand New Show (romaji)",
             "vintage": "Fall 2025",
             "media_url": "http://x/auto-new-artist",
         },
@@ -99,6 +102,7 @@ def test_full_amq_pipeline_with_idempotent_second_run(
             "artist_name": "Shared",
             "song_name": "Pick Me",
             "show_name": "Existing Show",
+            "show_name_romaji": "Existing Show (romaji)",
             "vintage": "Spring 2024",
             "media_url": "http://x/ambiguous",
         },
@@ -204,6 +208,19 @@ def test_full_amq_pipeline_with_idempotent_second_run(
     assert _count(tmp_app_root, "artist") == 4
     assert _count(tmp_app_root, "song") == 4
     assert _count(tmp_app_root, "show") == 2
+
+    # Per the romaji-required fix: every newly-created show row carries a
+    # non-null `name_romaji` matching its corresponding entry's romaji.
+    # The seeded "Existing Show" was inserted via insert_show without a
+    # romaji, so it stays NULL; only "Brand New Show" was created by
+    # the pipeline and must carry the threaded value.
+    new_show_rows = _fetch_all(
+        tmp_app_root,
+        "SELECT name, name_romaji FROM show WHERE name = ?",
+        ("Brand New Show",),
+    )
+    assert len(new_show_rows) == 1
+    assert new_show_rows[0]["name_romaji"] == "Brand New Show (romaji)"
 
     # The "Existing Song" resolved-bucket triple should still point at
     # existing_song and existing_show.

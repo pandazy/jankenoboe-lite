@@ -67,6 +67,7 @@ def test_import_plan_is_read_only(
                     "artist_name": "Plan RO",
                     "song_name": "Plan Song",
                     "show_name": "Plan Show",
+                    "show_name_romaji": "Plan Show (romaji)",
                     "vintage": "Fall 2024",
                     "media_url": "",
                 }

@@ -79,6 +79,7 @@ def test_resolved_exact_match_with_existing_show(
             "artist_name": "Artist A",
             "song_name": "Song A",
             "show_name": "Show A",
+            "show_name_romaji": "Show A (romaji)",
             "vintage": "Fall 2024",
             "media_url": "http://x/a",
         }
@@ -119,6 +120,7 @@ def test_auto_completable_artist_exists_song_missing(
             "artist_name": "Artist B",
             "song_name": "Fresh Song",
             "show_name": "Show B",
+            "show_name_romaji": "Show B (romaji)",
             "vintage": "",
             "media_url": "",
         }
@@ -150,6 +152,7 @@ def test_auto_completable_artist_missing_gets_artist_to_create(
             "artist_name": "Never Heard Of",
             "song_name": "Never Heard Song",
             "show_name": "Never Heard Show",
+            "show_name_romaji": "Never Heard Show (romaji)",
             "vintage": "Summer 2099",
             "media_url": "http://x/new",
         }
@@ -165,7 +168,10 @@ def test_auto_completable_artist_missing_gets_artist_to_create(
     assert item["show_to_create"]["name"] == "Never Heard Show"
     assert item["show_to_create"]["vintage"] == "Summer 2099"
     assert item["show_to_create"]["s_type"] is None
-    assert item["show_to_create"]["name_romaji"] is None
+    # Post romaji-required: `name_romaji` is the resolved romaji,
+    # not None. _resolve_show threads `entry["show_name_romaji"]`
+    # through to the block.
+    assert item["show_to_create"]["name_romaji"] == "Never Heard Show (romaji)"
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +195,7 @@ def test_ambiguous_when_two_artists_share_name(
             "artist_name": "Twin",
             "song_name": "Ambiguous Song",
             "show_name": "Show",
+            "show_name_romaji": "Show (romaji)",
             "vintage": "",
             "media_url": "",
         }
@@ -228,6 +235,7 @@ def test_song_invariant_violation_aborts(
             "artist_name": "Artist",
             "song_name": "Dup Song",
             "show_name": "",
+            "show_name_romaji": " (romaji)",
             "vintage": "",
             "media_url": "",
         }
@@ -263,6 +271,7 @@ def test_missing_show_does_not_make_ambiguous(
             "artist_name": "Artist X",
             "song_name": "Song X",
             "show_name": "No Such Show",
+            "show_name_romaji": "No Such Show (romaji)",
             "vintage": "Fall 9999",
             "media_url": "",
         }
@@ -301,6 +310,7 @@ def test_url_decoded_fields_are_matched_after_decoding(
             "artist_name": urllib.parse.quote("A & B"),
             "song_name": urllib.parse.quote("Song & Friends"),
             "show_name": urllib.parse.quote("Show %s"),
+            "show_name_romaji": urllib.parse.quote("Show %s") + " (romaji)",
             "vintage": "",
             "media_url": urllib.parse.quote("http://x/y?z=1&w=2"),
         }
@@ -331,6 +341,7 @@ def test_output_writes_plan_file_and_prints_summary(
             "artist_name": "Named",
             "song_name": "Some Song",
             "show_name": "Some Show",
+            "show_name_romaji": "Some Show (romaji)",
             "vintage": "",
             "media_url": "",
         },
@@ -338,6 +349,7 @@ def test_output_writes_plan_file_and_prints_summary(
             "artist_name": "Brand New",
             "song_name": "Brand Song",
             "show_name": "Brand Show",
+            "show_name_romaji": "Brand Show (romaji)",
             "vintage": "",
             "media_url": "",
         },
@@ -415,6 +427,7 @@ def test_plan_does_not_modify_db(
             "artist_name": "Stable",
             "song_name": "Stable Song",
             "show_name": "Stable Show",
+            "show_name_romaji": "Stable Show (romaji)",
             "vintage": "",
             "media_url": "",
         },
@@ -422,6 +435,7 @@ def test_plan_does_not_modify_db(
             "artist_name": "Unknown",
             "song_name": "Unknown Song",
             "show_name": "Unknown Show",
+            "show_name_romaji": "Unknown Show (romaji)",
             "vintage": "Spring 1999",
             "media_url": "",
         },
@@ -459,6 +473,7 @@ def test_mixed_buckets_sum_equals_entry_count(
             "artist_name": "Existing",
             "song_name": "Existing Song",
             "show_name": "Show",
+            "show_name_romaji": "Show (romaji)",
             "vintage": "",
             "media_url": "",
         },
@@ -467,6 +482,7 @@ def test_mixed_buckets_sum_equals_entry_count(
             "artist_name": "Existing",
             "song_name": "New Song",
             "show_name": "Show",
+            "show_name_romaji": "Show (romaji)",
             "vintage": "",
             "media_url": "",
         },
@@ -475,6 +491,7 @@ def test_mixed_buckets_sum_equals_entry_count(
             "artist_name": "Brand New",
             "song_name": "Whatever",
             "show_name": "Show",
+            "show_name_romaji": "Show (romaji)",
             "vintage": "",
             "media_url": "",
         },
@@ -483,6 +500,7 @@ def test_mixed_buckets_sum_equals_entry_count(
             "artist_name": "Twin",
             "song_name": "Conflict",
             "show_name": "Show",
+            "show_name_romaji": "Show (romaji)",
             "vintage": "",
             "media_url": "",
         },
@@ -616,6 +634,7 @@ def test_raw_amq_via_input_jsonpath_matches_flat_via_input(
             "artist_name": "Artist A",
             "song_name": "Song A",
             "show_name": "Show A",
+            "show_name_romaji": "Show A (romaji)",
             "vintage": "Fall 2024",
             "media_url": "http://x/a",
         }
@@ -733,6 +752,7 @@ def test_input_jsonstr_raw_amq_matches_flat_via_input(
             "artist_name": "Artist A",
             "song_name": "Song A",
             "show_name": "Show A",
+            "show_name_romaji": "Show A (romaji)",
             "vintage": "Fall 2024",
             "media_url": "http://x/a",
         }
@@ -799,6 +819,7 @@ def test_input_array_flat_matches_flat_via_input(
             "artist_name": "Artist A",
             "song_name": "Song A",
             "show_name": "Show A",
+            "show_name_romaji": "Show A (romaji)",
             "vintage": "Fall 2024",
             "media_url": "http://x/a",
         }
@@ -865,7 +886,7 @@ def test_input_array_rejects_raw_amq_with_invalid_input(
                     "songInfo": {
                         "artist": "Artist A",
                         "songName": "Song A",
-                        "animeNames": {"english": "Show A"},
+                        "animeNames": {"english": "Show A", "romaji": "Show A (romaji)"},
                         "vintage": "Fall 2024",
                     },
                     "videoUrl": "http://x/a",
@@ -967,3 +988,151 @@ def test_real_amq_export_file_ingests_end_to_end(
         == "Wooser's Hand-to-Mouth Life: Awakening Arc"
     ]
     assert len(pinned) >= 1, plan
+
+
+# ---------------------------------------------------------------------------
+# amq-import-romaji-required Task 1 — storage-gap exploration test.
+#
+# MUST FAIL on unfixed code: today `_resolve_show` hard-codes
+# `name_romaji: None` on every `show_to_create` block, so even though
+# the real AMQ fixture carries `songInfo.animeNames.romaji` on every
+# entry, the plan never threads the value through. The
+# `name_romaji` non-empty assertion below is what fails on unfixed
+# code.
+#
+# After the fix lands (`_resolve_show` reads
+# `entry["show_name_romaji"]` and threads it onto every block), this
+# test passes — every block carries the source romaji.
+# ---------------------------------------------------------------------------
+
+
+def test_real_amq_export_persists_romaji_into_show_block(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+) -> None:
+    fixture_path = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "tests"
+        / "fixtures"
+        / "amq_song_export-small.json"
+    )
+    copied = tmp_app_root / "amq_real.json"
+    shutil.copyfile(fixture_path, copied)
+
+    plan_path = tmp_app_root / "plan.json"
+
+    rc, _out, err = pinned_call(
+        "import_plan.py",
+        "--input-jsonpath",
+        "amq_real.json",
+        "--output",
+        str(plan_path),
+        cwd=tmp_app_root,
+        now=pinned_now,
+    )
+    assert rc == 0, err
+
+    # Build a (name, vintage) -> romaji lookup table from the fixture
+    # so the assertion can match on the same key the classifier uses.
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    expected_romaji_by_show: dict[tuple[str, str], str] = {}
+    for song in fixture["songs"]:
+        info = song["songInfo"]
+        names = info["animeNames"]
+        english = names["english"]
+        romaji = names["romaji"]
+        vintage = info["vintage"]
+        # The fixture's entries include shows where english == romaji
+        # (e.g. "Strawberry Panic!"). The classifier keys on `name`
+        # (English) + vintage; the romaji is just whatever lives on
+        # the source entry, which is what the block must carry.
+        expected_romaji_by_show[(english, vintage)] = romaji
+
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    blocks_checked = 0
+    for entry in plan["auto_completable"]:
+        block = entry.get("show_to_create")
+        if block is None:
+            # Existing-show hit — no `show_to_create` block, so no
+            # romaji to check on the plan. Skip; the resolve step
+            # writes nothing new for this entry anyway.
+            continue
+        name = block["name"]
+        vintage = block["vintage"]
+        # Storage-gap assertion: today the block carries
+        # `name_romaji: None`. After the fix it carries the source
+        # romaji.
+        assert isinstance(block.get("name_romaji"), str), block
+        assert block["name_romaji"] != "", block
+        assert block["name_romaji"] == expected_romaji_by_show[(name, vintage)], block
+        blocks_checked += 1
+
+    # Every fixture entry should produce a `show_to_create` block
+    # against an empty DB (zero rows seeded), so all 9 are checked.
+    assert blocks_checked == 9, plan
+
+
+# ---------------------------------------------------------------------------
+# amq-import-romaji-required Task 2 — validation-gap exploration test.
+#
+# MUST FAIL on unfixed code: today the preprocessor lists
+# `songInfo.animeNames.romaji` only as a fallback under the
+# `show_name` flat key. An entry with English present and romaji
+# empty/missing passes silently — the importer exits 0 and writes a
+# plan with `name_romaji: None` on every block. The `rc == 1`
+# assertion below is what fails on unfixed code.
+#
+# After the fix lands (`show_name_romaji` is its own required flat
+# key with a `details.kind = "missing_romaji"` discriminator), this
+# test passes — the file is rejected at index 0 with the typed
+# envelope.
+#
+# Fixture is read-only per R3.10: shutil.copyfile only.
+# ---------------------------------------------------------------------------
+
+
+def test_real_amq_export_missing_romaji_is_rejected(
+    tmp_app_root,
+    pinned_call,
+    pinned_now,
+) -> None:
+    fixture_path = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "tests"
+        / "fixtures"
+        / "amq_song_export-small-no-romaji.json"
+    )
+    copied = tmp_app_root / "amq_real_no_romaji.json"
+    shutil.copyfile(fixture_path, copied)
+
+    plan_path = tmp_app_root / "plan.json"
+
+    rc, _out, err = pinned_call(
+        "import_plan.py",
+        "--input-jsonpath",
+        "amq_real_no_romaji.json",
+        "--output",
+        str(plan_path),
+        cwd=tmp_app_root,
+        now=pinned_now,
+    )
+
+    # Validation-gap assertion: on unfixed code the importer exits
+    # 0 and writes the plan with `name_romaji: None`. After the fix
+    # the importer rejects with the typed envelope.
+    assert rc == 1, (rc, err)
+    assert err.strip(), "expected an error envelope on stderr"
+    envelope = json.loads(err)
+    error = envelope["error"]
+    assert error["code"] == "INVALID_INPUT"
+    details = error["details"]
+    assert details["missing_field"] == "show_name_romaji"
+    assert details["kind"] == "missing_romaji"
+    assert details["index"] == 0
+    # `available_keys` reflects the entry's own top-level keys —
+    # romaji lives nested inside `songInfo.animeNames`, so the top
+    # level still has `songInfo` and `videoUrl` etc. regardless.
+    assert "songInfo" in details["available_keys"]
+    # The plan file must not be written on a rejection.
+    assert not plan_path.exists() or plan_path.stat().st_size == 0
